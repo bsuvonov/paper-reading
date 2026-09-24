@@ -1,6 +1,17 @@
-# OSDI paper downloader
+# paper-reading
 
-Download the research papers from every OSDI edition listed in the
+A local paper-reading app for conference libraries and personal projects, with
+paper downloads, outlines, and scoped Codex sessions.
+
+Browse papers by conference, year, and category while reading them alongside the library.
+
+![Paper library in dark mode with expandable conference categories and a PDF reader](docs/screenshots/paper-library.png)
+
+Discuss papers with Codex in a resizable sidebar while keeping the paper open.
+
+![Codex sidebar answering a question about a paper beside its PDF](docs/screenshots/codex-sidebar.png)
+
+The included OSDI downloader retrieves research papers from every edition in the
 [USENIX OSDI archive](https://www.usenix.org/conferences/byname/179), starting in
 1994. Editions are discovered on each run, so newly published years are picked
 up automatically. Future years are excluded unless explicitly requested.
@@ -102,9 +113,26 @@ read it on the right. Switch to **Outline** for the selected paper's section
 hierarchy; click a page number or heading to jump to that PDF page.
 
 Use the selector above search to switch between conference libraries and local
-projects. Conference libraries include **OSDI, NSDI, FAST, USENIX ATC, and
-USENIX Security**. OSDI retains its existing archive support; the additional
-conference sources support proceedings from 2012 onward (ATC through 2025).
+projects. Conference libraries include **OSDI, SOSP, NSDI, FAST, USENIX ATC, and
+USENIX Security**. OSDI retains its existing archive support. SOSP uses the
+[official SIGOPS archive](https://www.sigops.org/s/conferences/sosp/2015/archive/index.html)
+and conference programs: odd years from 1967 through 2023, then annually from
+2024. The other conference sources support proceedings from 2012 onward (ATC
+through 2025). SOSP session categories and published PDF links are preserved.
+If an ACM or SIGOPS download fails, the downloader looks for public copies via
+Semantic Scholar, OpenAlex, and arXiv. It checks the DOI and title when available,
+requires an exact normalized title match for arXiv search, and checks the PDF's
+opening pages for the expected title before saving it. A fallback can be an
+author's preprint rather than the published version; the progress log identifies
+the copy, and the manifest records its source and version. The paper keeps its
+original conference identity and filename. Accepted papers can appear before
+their PDFs are published, and some papers have no downloadable public copy.
+Use **Open source** to visit the official paper page. Failed downloads remain
+available for retry.
+If the conference lists a paper without a PDF and the public-copy lookup cannot
+retrieve one, the reader shows **No PDF found**. **Check again** rereads the
+program for new links and retries the lookup. It preserves the paper's identity
+and leaves the download queue running.
 Selecting a year automatically loads its paper titles, including papers not yet
 downloaded. Cached lists appear immediately. Select an individual paper and click
 **Download paper**; it opens automatically when the download finishes (older

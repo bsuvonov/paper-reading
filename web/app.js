@@ -74,7 +74,7 @@ function paperCard(paper) {
   const meta = element('span', 'paper-meta');
   meta.append(element('span', 'year-tag', paper.project_kind === 'local' ? 'Local paper' : `${paper.project_name} ${paper.year}`));
   const task = downloadTask(paper.id);
-  const status = task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : 'Not downloaded';
+  const status = task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : paper.pdf_unavailable ? 'No PDF found' : 'Not downloaded';
   meta.append(element('span', 'badge' + (paper.downloaded ? ' ready' : ''), status));
   if (paper.section_count) meta.append(element('span', 'badge' + (paper.outline_status === 'needs_review' ? ' review' : ''), 'Outline'));
   button.append(meta, element('span', 'paper-title', paper.title));
@@ -192,7 +192,7 @@ function renderOutline() {
   }
   const header = element('div', 'outline-header');
   if (paper.downloaded) header.append(taskButton(paper.sections.length ? 'Regenerate outline' : 'Generate outline', 'outline', 'quiet'));
-  else header.append(taskButton('Download paper', 'download'));
+  else header.append(taskButton(paper.pdf_unavailable ? 'Check again' : 'Download paper', 'download'));
   if (state.project?.kind === 'local') {
     const remove = element('button', 'quiet danger', 'Remove paper');
     remove.dataset.task = 'true';
@@ -244,8 +244,15 @@ function showDocument(paper, section = null) {
   if (paper.downloaded) {
     empty.append(element('h2', '', 'Ready to prepare for reading'), element('p', '', 'This older paper needs a one-time conversion before it can open in your browser.'), taskButton('Open paper in reader', 'prepare'));
   } else {
-    empty.append(element('h2', '', 'Add this paper to your library'), element('p', '', 'Download the full paper to read it here and explore its structure.'), taskButton('Download paper', 'download'));
-    if (paper.error) {
+    empty.append(element('h2', '', paper.pdf_unavailable ? 'No PDF found' : 'Add this paper to your library'),
+      element('p', '', paper.pdf_unavailable ? paper.error : 'Download the full paper to read it here and explore its structure.'),
+      taskButton(paper.pdf_unavailable ? 'Check again' : 'Download paper', 'download'));
+    if (/^https?:\/\//i.test(paper.source_url || '')) {
+      const source = element('a', 'paper-source', 'Open source');
+      source.href = paper.source_url; source.target = '_blank'; source.rel = 'noopener noreferrer';
+      empty.append(source);
+    }
+    if (paper.error && !paper.pdf_unavailable) {
       const error = element('details', 'outline-note');
       error.append(element('summary', '', 'Previous download failed'), element('p', '', paper.error));
       empty.append(error);
@@ -256,7 +263,7 @@ function showDocument(paper, section = null) {
 function renderReader(previous) {
   const paper = state.detail;
   if (!paper) return;
-  if (!previous || previous.id !== paper.id || previous.viewer_url !== paper.viewer_url || previous.downloaded !== paper.downloaded) showDocument(paper);
+  if (!previous || previous.id !== paper.id || previous.viewer_url !== paper.viewer_url || previous.downloaded !== paper.downloaded || previous.pdf_unavailable !== paper.pdf_unavailable || previous.error !== paper.error) showDocument(paper);
 }
 async function selectPaper(id, {persist = true} = {}) {
   const requestId = ++state.request;
@@ -307,7 +314,7 @@ function renderJob(job) {
   if (!job) return;
   $('job-panel').className = job.status;
   const queue = job.queue || [];
-  $('job-title').textContent = `${labels[job.action] || 'Task'} · ${busy ? 'in progress' : job.status === 'done' ? 'complete' : 'failed — see progress for details'}${queue.length ? ` · ${queue.length} queued` : ''}`;
+  $('job-title').textContent = `${labels[job.action] || 'Task'} · ${busy ? 'in progress' : job.status === 'done' ? 'complete' : job.status === 'unavailable' ? 'no PDF found' : 'failed — see progress for details'}${queue.length ? ` · ${queue.length} queued` : ''}`;
   const progress = [job.title, job.log || 'Starting…'].filter(Boolean);
   if (queue.length) progress.push('Queued:\n' + queue.map(task => `${task.position}. ${task.title || 'Paper'}`).join('\n'));
   const failures = (job.completed || []).filter(task => task.status === 'failed' && task.id !== job.id).slice(-5);

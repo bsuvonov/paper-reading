@@ -107,6 +107,17 @@ class DownloadQueueTests(unittest.TestCase):
         self.wait_for_workers(2)
         self.assertEqual(self.launched[1][0]['project_id'], 'osdi')
 
+    def test_unavailable_pdf_does_not_stop_queue_or_count_as_success(self):
+        self.enqueue('unavailable')
+        self.enqueue('available')
+        self.launched[0][1].finish(3)
+        self.wait_for_workers(2)
+        status = self.jobs.snapshot()
+        self.assertEqual(status['completed'][0]['status'], 'unavailable')
+        self.assertEqual(status['paper_id'], 'available')
+        self.launched[1][1].finish()
+        self.assertEqual(self.jobs.snapshot()['status'], 'done')
+
     def test_worker_launch_failure_does_not_strand_remaining_downloads(self):
         self.fail_launch = 'broken'
         self.enqueue('one')

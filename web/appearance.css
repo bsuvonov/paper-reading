@@ -97,6 +97,7 @@ dialog input, dialog select { background: var(--surface); color: var(--ink); }
 .library-actions { padding: 10px 14px; gap: 6px; }
 .library-actions button { flex: 0 1 auto; }
 .outline-header { gap: 6px; padding: 8px 8px 12px; }
+.paper-source { display: inline-block; margin: 8px; color: var(--accent); font-size: 12px; }
 .job-summary { gap: 8px; }
 .job-summary button.quiet { min-height: 28px; padding: 4px 8px; font-size: 11px; }
 #close-job { width: 28px; flex: none; }

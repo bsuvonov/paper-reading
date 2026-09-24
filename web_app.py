@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local OSDI library and reader. Run: python3 web_app.py"""
+"""paper-reading: a local paper library and reader. Run: python3 web_app.py"""
 from __future__ import annotations
 
 import argparse
@@ -22,10 +22,14 @@ from flask import Flask, abort, jsonify, request, send_file
 
 import download_osdi as downloader
 import extract_outlines as extractor
-from projects import ProjectStore, CONFERENCES, discover_conference, fetch_pdf, save_pdf, validate_url
+from projects import ProjectStore, CONFERENCES, conference_url, discover_conference, fetch_pdf, save_pdf, validate_url
 
 ROOT = Path(__file__).resolve().parent
 YEARS = CONFERENCES['osdi'][1]
+
+
+class PaperUnavailable(RuntimeError):
+    pass
 
 
 def read_json(path, default=None):
@@ -91,6 +95,7 @@ class Library:
                 rows[ident] = dict(id=ident, title=record['title'], year=manifest.parent.name,
                                    category=record.get('category', ''), program_order=record.get('program_order'),
                                    downloaded=downloaded, outline_status=outline.get('status'),
+                                   pdf_unavailable=not downloaded and record.get('reason') == 'no_public_copy',
                                    section_count=len(outline.get('sections', [])),
                                    error=record.get('error'), source_url=record.get('page_url'),
                                    _path=path, _record=record, _manifest=manifest, _outline=outline)
@@ -240,7 +245,7 @@ class Jobs:
                 self._advance()
 
     def _finish(self, code):
-        self.current.update(status='done' if code == 0 else 'failed', finished=time.time())
+        self.current.update(status={0: 'done', 3: 'unavailable'}.get(code, 'failed'), finished=time.time())
         completed = dict(self.current)
         if code:
             completed['log'] = self._log(completed, 1000)
@@ -302,12 +307,12 @@ def ensure_downloader_idle(root):
 
 
 def sync_year(library, year, client, catalog_only=False):
-    print(f'{year}: finding papers in the USENIX proceedings…', flush=True)
+    print(f'{library.project["name"]} {year}: finding papers in the conference proceedings…', flush=True)
     manifest = library.papers / str(year) / 'manifest.json'
     previous = read_json(manifest)
     old = {downloader.paper_key(r): r for r in previous.get('papers', [])}
     conference = library.project['id']
-    edition = f'https://www.usenix.org/conference/{conference}{year % 100:02d}'
+    edition = conference_url(conference, year)
     program, papers = discover_conference(client, conference, year)
     if catalog_only:
         records = [{**asdict(p), 'status': 'not_selected'} for p in papers]
@@ -343,6 +348,8 @@ def download_one(library, row, client):
                           for r in manifest['papers']]
     downloader.save_manifest(row['_manifest'], manifest)
     if record['status'] == 'failed':
+        if record.get('reason') == 'no_public_copy':
+            raise PaperUnavailable(record['error'])
         raise RuntimeError(record.get('error', 'Download failed'))
     print('Paper saved.', flush=True)
 
@@ -640,6 +647,9 @@ if __name__ == '__main__':
     if args.worker:
         try:
             run_worker(args.root.resolve(), read_json(args.worker))
+        except PaperUnavailable as exc:
+            print(str(exc), flush=True)
+            sys.exit(3)
         except Exception as exc:
             print('Error: ' + str(exc), flush=True)
             sys.exit(1)

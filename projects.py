@@ -13,10 +13,12 @@ import pymupdf
 
 import download_osdi as downloader
 import extract_outlines as extractor
+import sosp
 
 
 CONFERENCES = {
     'osdi': ('OSDI', [1994, 1996, 1999, *range(2000, 2021, 2), *range(2021, date.today().year + 1)]),
+    'sosp': ('SOSP', sosp.YEARS),
     'nsdi': ('NSDI', list(range(2012, date.today().year + 1))),
     'fast': ('FAST', list(range(2012, date.today().year + 1))),
     'atc': ('USENIX ATC', list(range(2012, min(date.today().year, 2025) + 1))),
@@ -84,8 +86,14 @@ class ProjectStore:
         self.directory(ident).rename(trash / f'{ident}-{time.time_ns()}')
 
 
+def conference_url(conference, year):
+    return sosp.edition_url(year) if conference == 'sosp' else f'https://www.usenix.org/conference/{conference}{year % 100:02d}'
+
+
 def discover_conference(client, conference, year):
-    edition = f'https://www.usenix.org/conference/{conference}{year % 100:02d}'
+    if conference == 'sosp':
+        return sosp.discover(client, year)
+    edition = conference_url(conference, year)
     if conference == 'osdi':
         return downloader.discover_papers(client, year, edition)
     base, soup = client.page(edition + '/technical-sessions')

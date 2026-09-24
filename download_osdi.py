@@ -48,6 +48,10 @@ class DownloadError(Exception):
     pass
 
 
+class NoFullTextLink(DownloadError):
+    pass
+
+
 @dataclass
 class Paper:
     year: int
@@ -77,6 +81,8 @@ def absolute_url(base: str, href: str) -> str:
 
 def file_format(url: str) -> str:
     path = urlsplit(url).path.lower()
+    if urlsplit(url).hostname == 'dl.acm.org' and path.startswith('/doi/pdf/'):
+        return '.pdf'
     return next((ext for ext in FORMATS if path.endswith(ext)), "")
 
 
@@ -90,22 +96,23 @@ class Client:
         self.cancelled = threading.Event()
         self.next_request = 0.0
 
-    def get(self, url: str) -> requests.Response:
+    def get(self, url: str, *, timeout=None, retries=None, delay=None) -> requests.Response:
         if not hasattr(self.local, "session"):
             self.local.session = requests.Session()
             self.local.session.headers.update({
-                "User-Agent": "OSDI-paper-archiver/1.0 (personal research archive)",
+                "User-Agent": "paper-reading/1.0 (personal research library)",
                 "Accept-Encoding": "identity",
             })
-        for attempt in range(self.retries + 1):
+        retries = self.retries if retries is None else retries
+        for attempt in range(retries + 1):
             with self.lock:
                 wait = max(0, self.next_request - time.monotonic())
-                self.next_request = time.monotonic() + wait + self.delay
+                self.next_request = time.monotonic() + wait + (self.delay if delay is None else max(self.delay, delay))
             if self.cancelled.wait(wait):
                 raise DownloadError("Download interrupted")
             response = None
             try:
-                response = self.local.session.get(url, timeout=self.timeout)
+                response = self.local.session.get(url, timeout=self.timeout if timeout is None else timeout)
                 response.raise_for_status()
                 expected = response.headers.get("Content-Length")
                 if expected and not response.headers.get("Content-Encoding"):
@@ -116,7 +123,7 @@ class Client:
                 status = response.status_code if response is not None else None
                 if status is not None and status < 500 and status not in (408, 429):
                     raise DownloadError(f"HTTP {status}: {url}") from exc
-                if attempt == self.retries:
+                if attempt == retries:
                     raise DownloadError(f"Failed to fetch {url}: {exc}") from exc
                 retry_after = response.headers.get("Retry-After", "") if response is not None else ""
                 pause = float(retry_after) if retry_after.isdigit() else 2 ** attempt
@@ -372,6 +379,37 @@ def download_html(client: Client, url: str, directory: Path) -> tuple[Path, list
 
 def retrieve_paper(client: Client, paper: Paper, directory: Path, previous: dict,
                    force: bool = False) -> dict:
+    result = retrieve_original(client, paper, directory, previous, force)
+    if result['status'] != 'failed':
+        return result
+    from public_copies import candidates, eligible, validate_title
+    if not eligible(paper) or client.cancelled.is_set():
+        return result
+    print(('No PDF link on the conference page. ' if result.get('reason') == 'no_full_text_link'
+           else 'Publisher download failed. ') + 'Looking for a matching public copy…', flush=True)
+    errors = [result['error']]
+    for candidate in candidates(client, paper):
+        try:
+            print('Trying ' + candidate['provider'] + ': ' + candidate['url'], flush=True)
+            response = client.get(candidate['url'])
+            validate_document(response.content, '.pdf')
+            validate_title(response.content, paper.title)
+            path = directory / (paper_stem(paper) + '.pdf')
+            atomic_write(path, response.content)
+            print('Saved matching public copy (' + candidate['version'] + ').', flush=True)
+            return {**asdict(paper), 'status': 'downloaded', 'url': response.url,
+                    'download_source': candidate, 'path': path.relative_to(directory).as_posix(),
+                    'files': [file_record(path, directory)]}
+        except (DownloadError, OSError) as exc:
+            errors.append(candidate['url'] + ': ' + str(exc))
+    if result.get('reason') == 'no_full_text_link' and len(errors) == 1:
+        return {**result, 'reason': 'no_public_copy',
+                'error': 'The conference page has no PDF link for this paper, and no matching public copy could be retrieved. Try again later or open the source page.'}
+    return {**result, 'error': '; '.join(errors) + '; No matching public PDF could be downloaded.'}
+
+
+def retrieve_original(client: Client, paper: Paper, directory: Path, previous: dict,
+                      force: bool = False) -> dict:
     record = asdict(paper)
     if not force and verified_previous(previous, directory):
         return {**previous, **record, "status": "skipped"}
@@ -379,9 +417,18 @@ def retrieve_paper(client: Client, paper: Paper, directory: Path, previous: dict
         urls = list(paper.file_urls)
         if not urls:
             base, soup = client.page(paper.page_url)
-            urls = parse_file_urls(base, soup, paper.year >= 2012)
+            parts = urlsplit(paper.page_url)
+            if parts.hostname in ('sigops.org', 'www.sigops.org') and parts.path.endswith('/schedule.html'):
+                # A cached accepted-paper entry may acquire a PDF later. Read
+                # only this paper's links, never another paper in the program.
+                from sosp import parse_schedule
+                matches = [p for p in parse_schedule(paper.year, base, soup)
+                           if clean_text(p.title).casefold() == clean_text(paper.title).casefold()]
+                urls = list(matches[0].file_urls) if len(matches) == 1 else []
+            else:
+                urls = parse_file_urls(base, soup, paper.year >= 2012)
         if not urls:
-            raise DownloadError("No full-text download link on the paper page")
+            raise NoFullTextLink("No full-text download link on the paper page")
         errors = []
         for url in urls:
             try:
@@ -389,8 +436,13 @@ def retrieve_paper(client: Client, paper: Paper, directory: Path, previous: dict
                 if ext in (".html", ".htm"):
                     path, files = download_html(client, url, directory / paper_stem(paper))
                 else:
-                    path = directory / (paper_stem(paper) + (".txt" if ext == ".a" else ext))
                     response = client.get(url)
+                    # Publisher download endpoints need not end in .pdf.
+                    if not ext:
+                        if b'%PDF-' not in response.content[:1024]:
+                            raise DownloadError('The publisher did not return a PDF. Open the source link in your browser to check access.')
+                        ext = '.pdf'
+                    path = directory / (paper_stem(paper) + (".txt" if ext == ".a" else ext))
                     validate_document(response.content, ext)
                     atomic_write(path, response.content)
                     files = [path]
@@ -400,11 +452,16 @@ def retrieve_paper(client: Client, paper: Paper, directory: Path, previous: dict
             except (DownloadError, OSError) as exc:
                 errors.append(f"{url}: {exc}")
         raise DownloadError("; ".join(errors))
+    except NoFullTextLink as exc:
+        return {**record, "status": "failed", "reason": "no_full_text_link", "error": str(exc)}
     except (DownloadError, OSError) as exc:
         return {**record, "status": "failed", "error": str(exc)}
 
 
 def paper_key(record: dict) -> str:
+    parts = urlsplit(record['page_url'])
+    if parts.hostname in ('sigops.org', 'www.sigops.org') and parts.fragment.startswith('paper-'):
+        return record['page_url']
     return (record.get("file_urls") or [record["page_url"]])[0]
 
 
