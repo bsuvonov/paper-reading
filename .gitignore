@@ -1,0 +1,28 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Downloaded papers, generated outlines, and personal libraries
+/papers/
+/outlines/
+/projects/
+/conferences/
+/.catalog/
+/.web-jobs/
+*.part
+
+# Local settings, credentials, and temporary files
+.env
+.env.*
+!.env.example
+*.log
+*.swp
+*.swo
+.DS_Store
