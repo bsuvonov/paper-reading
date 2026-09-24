@@ -350,7 +350,7 @@ class WebAppTests(unittest.TestCase):
 
     def test_year_status_tracks_complete_partial_and_missing_files(self):
         status = self.catalog()['year_status']['2025']
-        self.assertEqual(status, dict(status='partial', downloaded=1, total=2, catalogued=True))
+        self.assertEqual(status, dict(status='partial', downloaded=1, total=2, catalogued=True, categories_loaded=False))
         manifest = json.loads(self.manifest.read_text())
         manifest['papers'] = manifest['papers'][:1]
         self.manifest.write_text(json.dumps(manifest))
@@ -404,6 +404,48 @@ class WebAppTests(unittest.TestCase):
         self.assertFalse(remote['downloaded'])
         self.assertIsNone(self.client.get('/api/papers/' + remote['id']).get_json()['viewer_url'])
         self.assertTrue((self.root / '.catalog' / '2025.json').is_file())
+
+    def test_category_refresh_preserves_downloads_and_overrides_stale_metadata(self):
+        saved = json.loads(self.manifest.read_text())
+        saved['papers'][0].update(category='Old session', program_order=99,
+                                  files=[web.downloader.file_record(self.pdf, self.pdf.parent)])
+        self.manifest.write_text(json.dumps(saved))
+        before = self.manifest.read_bytes()
+        original = self.catalog()['papers'][0]
+        papers = [web.downloader.Paper(2025, 'A paper', 'https://www.usenix.org/a',
+                                      category='Memory Tiering and CXL', program_order=2),
+                  web.downloader.Paper(2025, 'Missing paper', 'https://www.usenix.org/b',
+                                      category='KV Cache and Long Context', program_order=0)]
+        with patch.object(web, 'discover_conference', return_value=('https://www.usenix.org/program', papers)):
+            web.sync_year(web.Library(self.root), 2025, None, catalog_only=True)
+        data = self.catalog()
+        paper = next(p for p in data['papers'] if p['id'] == original['id'])
+        self.assertTrue(paper['downloaded'])
+        self.assertEqual(paper['category'], 'Memory Tiering and CXL')
+        self.assertEqual(paper['program_order'], 2)
+        self.assertEqual(self.manifest.read_bytes(), before)
+        self.assertTrue(data['year_status']['2025']['categories_loaded'])
+        with patch.object(web.downloader, 'retrieve_paper', wraps=web.downloader.retrieve_paper) as retrieve:
+            web.download_one(web.Library(self.root), web.Library(self.root).get(paper['id']), None)
+        self.assertEqual(retrieve.call_args.args[1].category, 'Memory Tiering and CXL')
+        self.assertEqual(json.loads(self.manifest.read_text())['papers'][0]['category'], 'Memory Tiering and CXL')
+
+    def test_category_lookup_without_available_sessions_is_cached(self):
+        paper = web.downloader.Paper(2025, 'A paper', 'https://www.usenix.org/a')
+        with patch.object(web, 'discover_conference', return_value=('https://www.usenix.org/program', [paper])):
+            web.sync_year(web.Library(self.root), 2025, None, catalog_only=True)
+        self.assertTrue(self.catalog()['year_status']['2025']['categories_loaded'])
+        self.assertEqual(self.catalog()['papers'][0]['category'], '')
+
+    def test_other_conferences_also_capture_session_categories(self):
+        client = Mock()
+        client.page.return_value = ('https://www.usenix.org/conference/fast26/technical-sessions', BeautifulSoup('''
+          <article class="node-session"><h2>Cloud Technologies I</h2><div class="content">
+          <article class="node-paper"><h2><a href="/conference/fast26/presentation/author">A FAST paper</a></h2></article>
+          </div></article>''', 'html.parser'))
+        _, papers = projects.discover_conference(client, 'fast', 2026)
+        self.assertEqual(papers[0].category, 'Cloud Technologies I')
+        self.assertEqual(papers[0].program_order, 0)
 
     def test_individual_download_from_cached_catalog_becomes_readable(self):
         library = web.Library(self.root, 'fast')

@@ -101,7 +101,8 @@ def discover_conference(client, conference, year):
             continue
         title = downloader.clean_text(link.get_text(' ', strip=True))
         if title:
-            papers[url] = downloader.Paper(year, title, url)
+            papers.setdefault(url, downloader.Paper(year, title, url,
+                              category=downloader.paper_category(node), program_order=len(papers)))
     if not papers:
         raise downloader.DownloadError('No research papers found at ' + base)
     return base, list(papers.values())

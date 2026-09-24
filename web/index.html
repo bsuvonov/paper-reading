@@ -7,7 +7,12 @@
   <script src="/static/preferences.js"></script>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/appearance.css">
+  <link rel="stylesheet" href="/static/vendor/xterm.css">
+  <link rel="stylesheet" href="/static/codex.css">
   <script src="/static/app.js" defer></script>
+  <script src="/static/vendor/xterm.js" defer></script>
+  <script src="/static/vendor/addon-fit.js" defer></script>
+  <script src="/static/codex.js" defer></script>
 </head>
 <body>
   <main id="workspace">
@@ -15,12 +20,13 @@
       <button id="toggle-sidebar" class="icon-button" aria-label="Hide sidebar" title="Hide sidebar" aria-controls="sidebar" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M6 8v8"/></svg></button>
       <button id="toggle-search" class="icon-button" aria-label="Hide search" title="Hide search" aria-controls="search-controls" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
       <button id="refresh" class="icon-button" aria-label="Refresh library" title="Refresh library"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button>
+      <button id="toggle-codex" class="icon-button" aria-label="Open Codex" title="Codex" aria-controls="codex-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5-6 7 6 7m8-14 6 7-6 7m-3-16-2 18"/></svg></button>
       <button id="toggle-theme" class="icon-button" aria-label="Dark mode" title="Switch to dark mode" aria-pressed="false"><svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14A9 9 0 0 1 10 3.5 9 9 0 1 0 20.5 14Z"/></svg><svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
     </nav>
     <aside id="sidebar" aria-label="Paper library and outlines">
       <div class="filters">
-        <div class="project-controls"><select id="project" aria-label="Project or conference"></select><button id="new-project" class="quiet" title="Create local project" aria-label="Create local project">＋</button><button id="manage-project" class="quiet" title="Manage project" aria-label="Manage project" hidden>⋯</button></div>
-        <div class="search-wrap" id="search-controls"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search paper titles…" aria-label="Search paper titles"></div>
+        <div class="project-controls"><select id="project" aria-label="Project or conference"></select><button id="new-project" class="quiet" title="Create local project" aria-label="Create local project"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><button id="manage-project" class="quiet" title="Manage project" aria-label="Manage project" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></svg></button></div>
+        <div class="search-wrap" id="search-controls"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search papers or categories…" aria-label="Search papers or categories"></div>
         <div class="filter-row"><select id="year" aria-label="Conference year"><option value="">All years</option></select><select id="availability" aria-label="Filter availability"><option value="all">All papers</option><option value="downloaded">Downloaded</option><option value="outlines">With outlines</option><option value="missing">Not downloaded</option></select></div>
       </div>
       <div class="sidebar-tabs"><div class="tabs" role="tablist" aria-label="Sidebar view"><button id="papers-tab" role="tab" aria-selected="true" aria-controls="paper-list">Papers <span id="paper-count">0</span></button><button id="outline-tab" role="tab" aria-selected="false" aria-controls="outline-panel">Outline</button></div><button id="save-to-project" class="quiet" hidden>Save to project</button></div>
@@ -28,7 +34,56 @@
       <div id="outline-panel" class="scroll-panel" role="tabpanel" aria-labelledby="outline-tab" hidden></div>
       <div class="library-actions"><button id="download-year" class="primary" disabled>Download year</button><button id="add-paper" class="primary" data-task hidden>Add paper</button></div>
     </aside>
-    <div id="divider" role="separator" aria-label="Resize library and reader" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="70" aria-valuenow="33" tabindex="0"><span></span></div>
+    <aside id="codex-sidebar" aria-label="Codex scopes and sessions" hidden>
+      <div class="codex-sidebar-heading"><strong>Codex</strong><div class="codex-navigation"><button id="codex-current-paper" class="quiet">Current paper</button><button id="codex-back" class="quiet" hidden>Sessions</button></div></div>
+      <div id="codex-error" class="codex-error" role="alert" hidden></div>
+      <div id="codex-browser">
+        <details id="codex-scope-editor" open>
+          <summary id="codex-scope-summary">Choose scope</summary>
+          <div class="codex-scope-form">
+            <label for="codex-scope-kind">Add to scope</label>
+            <select id="codex-scope-kind"><option value="conferences">Conferences and years</option><option value="project">Local project</option><option value="paper">Specific paper</option></select>
+            <div id="codex-conference-fields">
+              <label class="codex-check"><input id="codex-all-conferences" type="checkbox">All conferences</label>
+              <div id="codex-conferences" class="codex-checklist"></div>
+              <label class="codex-check"><input id="codex-all-years" type="checkbox" checked>All years</label>
+              <div id="codex-years" class="codex-year-grid" hidden></div>
+            </div>
+            <div id="codex-project-fields" hidden><label for="codex-project">Project</label><select id="codex-project"></select></div>
+            <div id="codex-paper-fields" hidden>
+              <label for="codex-paper-source">Conference or project</label><select id="codex-paper-source"></select>
+              <label for="codex-paper-year">Year</label><select id="codex-paper-year"></select>
+              <label for="codex-paper-search">Find a paper</label><input id="codex-paper-search" type="search" placeholder="Filter paper titles…">
+              <select id="codex-paper" size="5" aria-label="Paper"></select>
+              <p class="codex-help">Papers from the library’s fetched lists appear here. Select a year in the library to fetch its list.</p>
+            </div>
+            <button id="codex-add-scope" class="quiet">Add selection</button>
+            <div id="codex-scope-parts" class="codex-scope-parts"></div>
+            <div class="codex-inline-actions"><button id="codex-apply-scope" class="primary">Apply scope</button><button id="codex-clear-scope" class="quiet">Clear</button></div>
+          </div>
+        </details>
+        <p id="codex-scope-info" class="codex-help"></p>
+        <div class="codex-session-heading"><strong>Sessions</strong><button id="codex-new" class="quiet" disabled>New session</button></div>
+        <form id="codex-new-form" hidden>
+          <label for="codex-new-title">Session name</label><input id="codex-new-title" maxlength="160" placeholder="Research session">
+          <label for="codex-new-model">Starting model</label><select id="codex-new-model"><option value="">Codex default</option></select>
+          <div class="codex-inline-actions"><button type="submit" class="primary">Create and open</button><button type="button" id="codex-cancel-new" class="quiet">Cancel</button></div>
+        </form>
+        <div id="codex-sessions" class="scroll-panel"><p class="codex-help">Choose a scope to see its sessions.</p></div>
+      </div>
+      <section id="codex-main" aria-label="Codex terminal" hidden>
+        <div class="codex-terminal-toolbar">
+          <span id="codex-session-title">Choose a session</span><span id="codex-terminal-status" role="status"></span>
+          <button id="codex-rename" class="quiet" hidden>Rename</button>
+          <button id="codex-reconnect" class="quiet" hidden>Resume</button>
+          <button id="codex-stop" class="quiet" hidden>Stop</button>
+        </div>
+        <div id="codex-welcome" class="panel-empty">Select a scope, then create or continue a Codex session.</div>
+        <div id="codex-terminal" hidden></div>
+        <div id="codex-command-bar" hidden><span>Type <kbd>/</kbd> for commands · <kbd>/model</kbd> for models · <kbd>!</kbd> for shell commands · <kbd>Esc</kbd> to interrupt</span><button id="codex-copy" class="quiet">Copy selection</button></div>
+      </section>
+    </aside>
+    <div id="divider" role="separator" aria-label="Resize sidebar and paper reader" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="70" aria-valuenow="33" tabindex="0"><span></span></div>
     <section id="reader" aria-label="Paper reader">
       <div id="viewer-container"><div class="empty-state"><div class="book-icon" aria-hidden="true">▤</div><h2>A place for close reading</h2><p>Choose a paper on the left to read it here.<br>Explore its outline to see how the story is structured.</p><span class="hint">Drag the divider to make room for your reading.</span></div></div>
     </section>
@@ -45,5 +100,6 @@
   <dialog id="save-dialog">
     <form id="save-form"><h2>Save to a local project</h2><label>Project<select id="save-project" required></select></label><p id="save-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close="save-dialog">Cancel</button><button type="submit" class="primary">Save paper</button></div></form>
   </dialog>
+  <dialog id="codex-rename-dialog"><form id="codex-rename-form"><h2>Rename session</h2><label>Name<input id="codex-rename-title" required maxlength="160"></label><div class="dialog-actions"><button type="button" class="quiet" data-close="codex-rename-dialog">Cancel</button><button type="submit" class="primary">Save</button></div></form></dialog>
 </body>
 </html>

@@ -73,6 +73,36 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(d.parse_file_urls('https://www.usenix.org/', soup(html), True),
                          ['https://www.usenix.org/system/files/paper.pdf'])
 
+    def test_session_categories_preserve_program_order_and_ignore_paper_headings(self):
+        html = '''<article class="node-session"><h2>KV Cache and Long Context</h2>
+          <div class="node-paper"><h2><a href="/conference/osdi26/presentation/z">Z paper</a></h2>
+            <div><h3>A misleading abstract heading</h3></div></div>
+          <div class="node-paper"><h2><a href="/conference/osdi26/presentation/a">A paper</a></h2></div>
+        </article><article class="node-session"><h2>Memory Tiering and CXL</h2>
+          <div class="node-paper"><h2><a href="/conference/osdi26/presentation/m">Memory paper</a></h2></div>
+        </article><div class="node-paper"><h2><a href="/conference/osdi26/presentation/u">Unclassified</a></h2></div>'''
+        papers = d.parse_program(2026, 'https://www.usenix.org/', soup(html))
+        self.assertEqual([p.category for p in papers],
+                         ['KV Cache and Long Context', 'KV Cache and Long Context', 'Memory Tiering and CXL', ''])
+        self.assertEqual([p.program_order for p in papers], [0, 1, 2, 3])
+        self.assertEqual([p.title for p in papers[:2]], ['Z paper', 'A paper'])
+
+    def test_legacy_categories_use_session_chair_and_heading(self):
+        html = '''<b><font>Storage</font></b><br><i>Session Chair: A Person</i>
+          <p><b><a href="first.html">First paper</a></b></p>
+          <p><b><a href="second.html">Second paper</a></b></p>
+          <b>Scheduling</b><br><i>Session Chair: Another Person</i>
+          <p><b><a href="third.html">Third paper</a></b></p>'''
+        papers = d.parse_program(2000, 'https://www.usenix.org/legacy/osdi2000/', soup(html))
+        self.assertEqual([p.category for p in papers], ['Storage', 'Storage', 'Scheduling'])
+
+    def test_legacy_categories_without_session_chairs(self):
+        html = '''<h2>Tuesday</h2><h3>I/O</h3><a href="first.html">First paper</a>
+          <h3>Resource Management</h3><a href="second.html">Second paper</a>
+          <h2>Wednesday</h2><a href="third.html">Unclassified paper</a>'''
+        papers = d.parse_program(1999, 'https://www.usenix.org/legacy/osdi99/', soup(html))
+        self.assertEqual([p.category for p in papers], ['I/O', 'Resource Management', ''])
+
     def test_legacy_prefers_publisher_copy_and_filters_talk_slides(self):
         html = '''<a href="talk_slides/a/a.ps">Talk slides</a>
             <a href="https://author.example/full.ps">Full paper</a>

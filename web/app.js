@@ -10,6 +10,9 @@ state.yearStatus = {};
 state.pendingCatalog = null;
 state.startingCatalog = false;
 state.catalogFailure = null;
+try {
+  state.collapsedCategories = new Set(JSON.parse(localStorage.getItem('paper-collapsed-categories') || '[]'));
+} catch { state.collapsedCategories = new Set(); }
 let dismissedJob = localStorage.getItem('osdi-dismissed-job');
 const labels = {catalog: 'Finding papers', download_year: 'Downloading papers', download: 'Downloading paper', outline: 'Generating outline', prepare: 'Preparing reader', import_url: 'Fetching paper', copy_paper: 'Saving paper to project'};
 let toastTimer;
@@ -58,33 +61,87 @@ function updateTaskButton(button) {
 }
 function filteredPapers() {
   const query = $('search').value.toLowerCase().trim();
-  return state.papers.filter(p => (!query || p.title.toLowerCase().includes(query)) &&
+  return state.papers.filter(p => (!query || `${p.title} ${p.category || ''}`.toLowerCase().includes(query)) &&
     (!$('year').value || p.year === $('year').value) &&
     ($('availability').value === 'all' ||
       $('availability').value === 'downloaded' && p.downloaded ||
       $('availability').value === 'missing' && !p.downloaded ||
       $('availability').value === 'outlines' && p.section_count > 0));
 }
+function paperCard(paper) {
+  const button = element('button', 'paper-card' + (state.selected === paper.id ? ' selected' : ''));
+  button.setAttribute('aria-pressed', String(state.selected === paper.id));
+  const meta = element('span', 'paper-meta');
+  meta.append(element('span', 'year-tag', paper.project_kind === 'local' ? 'Local paper' : `${paper.project_name} ${paper.year}`));
+  const task = downloadTask(paper.id);
+  const status = task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : 'Not downloaded';
+  meta.append(element('span', 'badge' + (paper.downloaded ? ' ready' : ''), status));
+  if (paper.section_count) meta.append(element('span', 'badge' + (paper.outline_status === 'needs_review' ? ' review' : ''), 'Outline'));
+  button.append(meta, element('span', 'paper-title', paper.title));
+  button.onclick = () => selectPaper(paper.id);
+  return button;
+}
+function categoryGroups(papers) {
+  const groups = new Map();
+  for (const paper of papers) {
+    const category = paper.category || 'Uncategorized';
+    const key = JSON.stringify([state.projectId, paper.year, category]);
+    if (!groups.has(key)) groups.set(key, {key, category, year: paper.year, papers: [], order: Infinity});
+    const group = groups.get(key);
+    group.papers.push(paper);
+    group.order = Math.min(group.order, paper.program_order ?? Infinity);
+  }
+  return [...groups.values()].sort((a, b) => Number(b.year) - Number(a.year) ||
+    (a.category === 'Uncategorized') - (b.category === 'Uncategorized') ||
+    a.order - b.order || a.category.localeCompare(b.category));
+}
 function renderList() {
   const papers = filteredPapers();
   const list = $('paper-list');
+  const scrollTop = list.scrollTop;
+  const focusedCategory = list.contains(document.activeElement) ? document.activeElement.dataset.categoryKey : null;
   list.replaceChildren();
   const lookingUp = catalogLookupActive();
   const failure = state.catalogFailure?.key === catalogKey() ? state.catalogFailure.message : '';
   if (papers.length && lookingUp) list.append(element('p', 'catalog-status', 'Loading the complete paper list…'));
+  if (papers.length && failure && !lookingUp) {
+    const note = element('div', 'catalog-status', 'Could not refresh paper categories. ');
+    const retry = element('button', 'quiet', 'Retry');
+    retry.onclick = () => queueYearCatalog(true);
+    note.append(retry);
+    list.append(note);
+  }
   $('paper-count').textContent = papers.length;
-  for (const paper of papers) {
-    const button = element('button', 'paper-card' + (state.selected === paper.id ? ' selected' : ''));
-    button.setAttribute('aria-pressed', String(state.selected === paper.id));
-    const meta = element('span', 'paper-meta');
-    meta.append(element('span', 'year-tag', paper.project_kind === 'local' ? 'Local paper' : `${paper.project_name} ${paper.year}`));
-    const task = downloadTask(paper.id);
-    const status = task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : 'Not downloaded';
-    meta.append(element('span', 'badge' + (paper.downloaded ? ' ready' : ''), status));
-    if (paper.section_count) meta.append(element('span', 'badge' + (paper.outline_status === 'needs_review' ? ' review' : ''), 'Outline'));
-    button.append(meta, element('span', 'paper-title', paper.title));
-    button.onclick = () => selectPaper(paper.id);
-    list.append(button);
+  if (state.project?.kind === 'conference') {
+    for (const group of categoryGroups(papers)) {
+      const details = element('details', 'paper-category');
+      details.open = Boolean($('search').value.trim()) || !state.collapsedCategories.has(group.key);
+      const summary = element('summary', 'category-heading');
+      summary.dataset.categoryKey = group.key;
+      const title = $('year').value ? group.category : `${group.year} · ${group.category}`;
+      summary.append(element('span', 'category-title', title), element('span', 'category-count', group.papers.length));
+      summary.onclick = event => {
+        event.preventDefault();
+        details.open = !details.open;
+        if (details.open) state.collapsedCategories.delete(group.key);
+        else state.collapsedCategories.add(group.key);
+        localStorage.setItem('paper-collapsed-categories', JSON.stringify([...state.collapsedCategories]));
+      };
+      summary.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          if (!event.repeat) summary.click();
+        }
+      };
+      const content = element('div', 'category-papers');
+      group.papers.sort((a, b) => (a.program_order ?? Infinity) - (b.program_order ?? Infinity) || a.title.localeCompare(b.title));
+      for (const paper of group.papers) content.append(paperCard(paper));
+      details.append(summary, content);
+      list.append(details);
+      if (focusedCategory === group.key) summary.focus({preventScroll: true});
+    }
+  } else {
+    for (const paper of papers) list.append(paperCard(paper));
   }
   if (!papers.length) {
     const empty = element('div', 'panel-empty');
@@ -98,6 +155,7 @@ function renderList() {
     }
     list.append(empty);
   }
+  list.scrollTop = scrollTop;
   renderYearAction();
 }
 function renderYearAction() {
@@ -234,6 +292,7 @@ async function refreshLibrary() {
   renderList();
   renderJob(data.job);
   if (state.selected && state.papers.some(p => p.id === state.selected)) await selectPaper(state.selected);
+  if ($('year').value && catalogNeedsRefresh() && !catalogLookupActive() && !state.catalogFailure) await queueYearCatalog();
 }
 function renderJob(job) {
   const signature = value => JSON.stringify([value?.id, value?.status, value?.queue?.map(task => task.id)]);
@@ -323,6 +382,10 @@ $('download-year').onclick = () => {
 function catalogKey(project = state.projectId, year = $('year').value) {
   return `${project}/${year}`;
 }
+function catalogNeedsRefresh(year = $('year').value) {
+  const info = state.yearStatus[String(year)];
+  return !info?.catalogued || !info?.categories_loaded;
+}
 function catalogLookupActive() {
   const key = catalogKey();
   return (state.pendingCatalog && catalogKey(state.pendingCatalog.project_id, state.pendingCatalog.year) === key) ||
@@ -332,7 +395,7 @@ async function queueYearCatalog(force = false) {
   const year = Number($('year').value);
   state.catalogFailure = null;
   state.pendingCatalog = null;
-  if (year && state.project?.kind === 'conference' && (force || !state.yearStatus[String(year)]?.catalogued)) {
+  if (year && state.project?.kind === 'conference' && (force || catalogNeedsRefresh(year))) {
     state.pendingCatalog = {project_id: state.projectId, year, force};
   }
   renderList();
@@ -341,7 +404,7 @@ async function queueYearCatalog(force = false) {
 async function processPendingCatalog() {
   const pending = state.pendingCatalog;
   if (!pending || state.startingCatalog || state.job?.status === 'running') return;
-  if (catalogKey(pending.project_id, pending.year) !== catalogKey() || (!pending.force && state.yearStatus[String(pending.year)]?.catalogued)) {
+  if (catalogKey(pending.project_id, pending.year) !== catalogKey() || (!pending.force && !catalogNeedsRefresh(pending.year))) {
     state.pendingCatalog = null;
     renderList();
     return;

@@ -115,6 +115,13 @@ Downloads require one selected year; **All years** is for browsing or finding
 paper titles. The year selector shows **✓ Downloaded** when the full cataloged
 edition is saved locally, and a count such as **12/20 downloaded** for partial
 downloads. Missing files count as missing downloads.
+Conference papers are grouped under collapsible session categories from the
+official program, in program order. Click a category heading to hide or show its
+papers; collapsed groups are remembered across refreshes. Search matches both
+paper titles and category names and expands matching groups. **All years** keeps
+each year's categories separate. Papers without a published category appear under
+**Uncategorized**. Existing catalogs refresh their category metadata when you
+select a year, without downloading papers again.
 Availability depends on the publisher; unavailable proceedings or downloads
 produce an error in the task log and can be retried.
 
@@ -174,10 +181,84 @@ running command-line download/extraction jobs alongside app jobs.
 
 The app binds to localhost. Use `--port 8080` for another port, or
 `--root /path/to/library` for another folder containing `papers/` and `outlines/`.
-PDF display uses your browser's built-in viewer.
-HTML and text papers are also supported. Keep the server running while tasks
-complete; logs are saved under `.web-jobs/`. Generating an outline in the app
-updates the comparison using all saved per-paper outlines.
+
+PDF display uses your browser's built-in viewer. HTML and text papers are also
+supported. Keep the server running while tasks complete; logs are saved under
+`.web-jobs/`. Generating an outline in the app updates the comparison using all
+saved per-paper outlines.
+
+### Codex research sessions
+
+Install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) and sign in with
+`codex login` on the machine running the reader. The integration uses that local
+installation and account. It does not require a separate API key or expose your
+credentials to the browser. Linux and macOS are supported; on Windows, run the
+reader and Codex inside WSL.
+The integration is tested with Codex CLI 0.156.1.
+
+Click the Codex icon in the far-left control strip. Build a scope by adding any
+combination of conferences and years, local projects, or individual papers.
+**All conferences** plus selected years covers those years wherever the
+conference has proceedings. **All years** includes the conference's available
+years; add separate selections to use different years for different conferences.
+**Current paper** selects the paper open in the reader. Apply the scope to see
+its saved sessions, ordered by creation time, newest first.
+
+Create a session with an optional name and starting model, or click a saved
+session to continue it. Codex runs in the left sidebar while the paper remains
+visible in the reader. Drag the divider to adjust their widths. The sidebar
+runs the real interactive Codex CLI:
+type `/model` to change models and reasoning, `/permissions` to change command
+permissions, `/` to see native commands, and `!` to run a shell command. Keyboard
+input, paste, command output, tool progress, approval prompts, and interruption
+work in the terminal. Use **Sessions** to return to the scope and session list,
+and **Back to session** to return to the terminal. The far-left controls switch
+between the paper library and Codex without losing the paper's page or the
+running conversation. **Stop** ends the running process; **Resume** reopens its saved
+Codex thread. Closing the panel or browser leaves a running session alive while
+the reader server remains running.
+On first opening a workspace, Codex may show its normal folder trust prompt.
+Conversations become resumable after the first message; an empty session opens
+a fresh conversation when restarted.
+
+Each session has its own ignored `codex-sessions/<session-id>/` directory:
+
+```text
+session.json              # Scope, name, model, timestamps, and native thread id
+terminal.log              # Terminal transcript
+codex-history.jsonl       # Link to Codex's native saved conversation
+workspace/
+  AGENTS.md               # Research instructions for this scope
+  PAPERS.md               # Human-readable paper index
+  scope.json              # Scope and paper metadata
+  papers/                 # Links to scoped papers and outlines; fetched full texts
+  notes/                  # Space for research output
+  tools/papers.py         # Paper discovery, download, and text-extraction helper
+```
+
+Downloaded library papers are linked individually so narrow scopes do not link
+an entire conference folder. Source links and the index refresh when a stopped
+session resumes. Missing full texts remain listed by URL; Codex can use the
+helper's `fetch PAPER_KEY` or `fetch --all` commands to retrieve them into its own
+workspace. `discover` loads proceedings for selected years not yet catalogued,
+and `text PAPER_KEY --pages 1-5` reads a PDF with page markers. These helpers keep
+the reader's manifests intact. Session scope supplies research context; it is
+not an operating-system security boundary. Sessions start with Codex's
+`workspace-write` sandbox and `on-request` approvals.
+
+Conversation history is saved by Codex in its normal local storage, with a link
+from the separate session folder. Keep that Codex storage as well as
+`codex-sessions/` to resume conversations after restarting the server. Browser
+reloads reconnect to the same process. Native `/new`, `/fork`, and `/resume`
+commands create or switch Codex threads independently; use the reader's
+**New session** button for separately indexed research sessions.
+
+The backend uses the documented [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server)
+for model discovery and locating saved threads by their exact workspace, and a PTY for the full
+interactive CLI. Browser terminal assets are vendored locally in `web/vendor/`
+with their licenses; no CDN is required. Terminal reads and writes require the
+reader's same-origin request token. Never expose this local development server
+directly to the internet.
 
 ## Extract and compare paper outlines from the command line
 

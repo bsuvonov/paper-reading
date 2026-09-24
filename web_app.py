@@ -66,8 +66,11 @@ class Library:
         records = {downloader.paper_key(r): r for r in cached.get('papers', [])}
         for record in saved.get('papers', []):
             key = downloader.paper_key(record)
-            records[key] = {**records.get(key, {}), **record}
+            cached_record = records.get(key, {})
+            records[key] = {**cached_record, **record,
+                            **{k: cached_record[k] for k in ('category', 'program_order') if k in cached_record}}
         return {**cached, **saved, 'papers': list(records.values()),
+                'categories_version': max(cached.get('categories_version', 0), saved.get('categories_version', 0)),
                 'discovered': max(cached.get('discovered', 0), saved.get('discovered', 0), len(records))}
 
     def catalog(self):
@@ -86,6 +89,7 @@ class Library:
                 downloaded = record_downloaded(manifest.parent, record)
                 outline = outlines.get(str(path), {}) if downloaded else {}
                 rows[ident] = dict(id=ident, title=record['title'], year=manifest.parent.name,
+                                   category=record.get('category', ''), program_order=record.get('program_order'),
                                    downloaded=downloaded, outline_status=outline.get('status'),
                                    section_count=len(outline.get('sections', [])),
                                    error=record.get('error'), source_url=record.get('page_url'),
@@ -98,6 +102,7 @@ class Library:
             ident = hashlib.sha256(str(paper.path).encode()).hexdigest()[:20]
             outline = outlines.get(str(paper.path), {})
             rows[ident] = dict(id=ident, title=paper.title, year=paper.year, downloaded=True,
+                               category='', program_order=None,
                                outline_status=outline.get('status'), section_count=len(outline.get('sections', [])),
                                source_url=None, error=None, _path=paper.path, _record={},
                                _manifest=None, _outline=outline)
@@ -119,6 +124,7 @@ class Library:
                 downloaded = sum(r['downloaded'] for r in rows if r['year'] == str(year))
                 status = 'partial' if downloaded else 'not_downloaded'
             statuses[str(year)] = dict(status=status, downloaded=downloaded, total=total or None,
+                                       categories_loaded=manifest['categories_version'] >= downloader.CATEGORY_VERSION,
                                        catalogued=bool(records) and len(records) >= total)
         return statuses
 
@@ -307,6 +313,7 @@ def sync_year(library, year, client, catalog_only=False):
         records = [{**asdict(p), 'status': 'not_selected'} for p in papers]
         downloader.save_manifest(library.root / '.catalog' / f'{year}.json',
                                  dict(year=year, edition_url=edition, program_url=program,
+                                      categories_version=downloader.CATEGORY_VERSION,
                                       discovered=len(records), status='catalogued', papers=records))
         print(f'{year}: found {len(records)} papers.', flush=True)
         return
@@ -314,6 +321,7 @@ def sync_year(library, year, client, catalog_only=False):
     for record in records:
         record.setdefault('status', 'not_selected')
     downloader.save_manifest(manifest, dict(year=year, edition_url=edition, program_url=program,
+                                            categories_version=downloader.CATEGORY_VERSION,
                                             discovered=len(records), status='catalogued', papers=records))
     print(f'{year}: found {len(records)} papers.', flush=True)
 
@@ -326,7 +334,8 @@ def download_one(library, row, client):
         data, resolved, title = fetch_pdf(client, raw['page_url'])
         save_pdf(library, data, row['title'] or title, raw['page_url'], resolved)
         return
-    paper = downloader.Paper(int(row['year']), row['title'], raw['page_url'], tuple(raw.get('file_urls', [])))
+    paper = downloader.Paper(int(row['year']), row['title'], raw['page_url'], tuple(raw.get('file_urls', [])),
+                             category=raw.get('category', ''), program_order=raw.get('program_order'))
     print('Downloading: ' + row['title'], flush=True)
     record = downloader.retrieve_paper(client, paper, row['_manifest'].parent, raw)
     manifest = library.catalog_data(row['year'])
@@ -459,12 +468,14 @@ def create_app(root=ROOT):
     jobs = Jobs(library.root)
     token = secrets.token_urlsafe(32)
     store = ProjectStore(root)
+    from codex_sessions import register_codex
+    register_codex(app, root, Library)
     app.config.update(LIBRARY=library, JOBS=jobs, TRUSTED_HOSTS=['localhost', '127.0.0.1', '[::1]'],
                       MAX_CONTENT_LENGTH=101 * 1024 * 1024)
 
     @app.before_request
     def protect_writes():
-        if request.path.startswith('/api/') and request.method in ('POST', 'PATCH', 'DELETE'):
+        if request.path.startswith('/api/codex/') or (request.path.startswith('/api/') and request.method in ('POST', 'PATCH', 'DELETE')):
             if not secrets.compare_digest(request.headers.get('X-Library-Token', ''), token):
                 return jsonify(error='Reload the page before making changes.'), 403
 

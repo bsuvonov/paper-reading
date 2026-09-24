@@ -1,0 +1,51 @@
+#codex-sidebar { grid-area: sidebar; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--sidebar-surface); }
+#codex-browser, #codex-main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+#codex-main { background: var(--page); }
+:root[data-mode="codex"] #workspace { grid-template-columns: var(--rail-width) minmax(240px, var(--left)) 10px minmax(0, 1fr); grid-template-areas: "tools sidebar divider reader"; }
+:root[data-mode="codex"] #sidebar { display: none; }
+:root[data-mode="codex"] #divider { display: flex !important; }
+.codex-sidebar-heading, .codex-session-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; font-size: 12px; }
+.codex-sidebar-heading { flex: none; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.codex-navigation { display: flex; flex-wrap: wrap; gap: 6px; }
+#codex-scope-editor { flex: 0 1 auto; overflow: auto; max-height: 60%; border-bottom: 1px solid var(--line); }
+#codex-scope-editor > summary { padding: 12px 14px; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.codex-scope-form, #codex-new-form { padding: 0 14px 14px; }
+.codex-scope-form > label, #codex-new-form > label, #codex-project-fields > label, #codex-paper-fields > label { display: block; font-size: 11px; color: var(--muted); margin: 8px 0 5px; }
+#codex-sidebar select, #codex-sidebar input:not([type="checkbox"]) { width: 100%; min-width: 0; background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-radius: 5px; padding: 6px 8px; font: inherit; font-size: 12px; }
+#codex-sidebar select[size] { margin-top: 6px; }
+.codex-checklist, .codex-year-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.codex-year-grid { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); max-height: 130px; overflow: auto; margin: 6px 0 10px; }
+.codex-check { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; margin: 7px 0; cursor: pointer; }
+.codex-check input { margin: 0; accent-color: var(--primary); }
+.codex-scope-parts { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.codex-scope-part { display: flex; gap: 7px; align-items: center; background: var(--soft); padding: 6px 8px; border-radius: 5px; font-size: 11px; }
+.codex-scope-part span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.codex-scope-part button { flex: none; padding: 2px; min-width: 24px; min-height: 24px; border: 0; background: transparent; }
+.codex-inline-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.codex-help { font-size: 11px; color: var(--muted); line-height: 1.6; margin: 8px 0; }
+#codex-scope-info { margin: 8px 14px 0; }
+.codex-error { padding: 10px 14px; color: var(--danger); background: var(--danger-bg); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.codex-session { width: 100%; display: block; text-align: left; background: transparent; border: 1px solid transparent; padding: 10px; margin-bottom: 3px; }
+.codex-session.selected { border-color: var(--selected-border); background: var(--selected); }
+.codex-session strong { display: block; font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
+.codex-session small { display: block; font-size: 10px; color: var(--muted); margin-top: 5px; }
+.codex-terminal-toolbar { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 11px; }
+#codex-session-title { flex: 1; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+#codex-terminal-status { color: var(--muted); }
+#codex-terminal { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+#codex-terminal .xterm { height: 100%; padding: 10px; }
+#codex-terminal .xterm-viewport { background: var(--page); scrollbar-color: var(--divider-grip) var(--page); }
+#codex-command-bar { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+#codex-command-bar span { flex: 1; line-height: 1.8; }
+#codex-command-bar kbd { font: inherit; color: var(--ink); }
+#codex-command-bar button { font-size: 10px; }
+#codex-welcome { margin: auto; }
+@media (max-width: 800px) {
+  :root[data-mode="codex"] #workspace { grid-template-columns: var(--rail-width) minmax(200px, var(--left)) 10px minmax(0, 1fr); }
+}
+@media (max-width: 550px) {
+  :root[data-mode="codex"] #workspace { grid-template-columns: var(--rail-width) minmax(190px, var(--left)) 8px minmax(0, 1fr); }
+  .codex-checklist { grid-template-columns: 1fr; }
+  #codex-command-bar span { display: none; }
+  #codex-terminal .xterm { padding: 6px; }
+}

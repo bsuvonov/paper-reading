@@ -16,6 +16,7 @@ htmlcov/
 /conferences/
 /.catalog/
 /.web-jobs/
+/codex-sessions/
 *.part
 
 # Local settings, credentials, and temporary files

@@ -25,6 +25,7 @@ from bs4 import BeautifulSoup
 
 
 ARCHIVE_URL = "https://www.usenix.org/conferences/byname/179"
+CATEGORY_VERSION = 1
 LEGACY_PROGRAMS = {
     1994: "publications/library/proceedings/osdi/index.html",
     1996: "publications/library/proceedings/osdi96/",
@@ -54,6 +55,8 @@ class Paper:
     page_url: str
     # Some legacy programs link directly to the paper.
     file_urls: tuple[str, ...] = ()
+    category: str = ''
+    program_order: int | None = None
 
 
 def clean_text(value: str) -> str:
@@ -144,6 +147,31 @@ def parse_editions(soup: BeautifulSoup, base: str) -> dict[int, str]:
     return dict(sorted(editions.items()))
 
 
+def paper_category(node, *, legacy=False):
+    """Read the program's session heading, never a paper title or abstract."""
+    session = node.find_parent(class_='node-session')
+    if session:
+        for heading in session.find_all(['h2', 'h3']):
+            if not heading.find_parent(class_='node-paper'):
+                return clean_text(heading.get_text(' ', strip=True))
+        return ''
+    if legacy:
+        # Older schedules use a heading immediately before the session chair.
+        chair = node.find_previous(string=re.compile(r'Session\s+Chair', re.I))
+        if chair:
+            heading = chair.find_previous(lambda tag: tag.name in ('h3', 'h4', 'b', 'strong')
+                                          or 'techtitle' in tag.get('class', []))
+        else:
+            heading = node.find_previous(['h2', 'h3'])
+            if heading and heading.name != 'h3':
+                heading = None
+        if heading and not heading.find('a'):
+            title = clean_text(heading.get_text(' ', strip=True))
+            if len(title) < 180 and 'chair' not in title.lower():
+                return title
+    return ''
+
+
 def parse_program(year: int, base: str, soup: BeautifulSoup) -> list[Paper]:
     papers: dict[str, Paper] = {}
     if year >= 2012:
@@ -159,7 +187,7 @@ def parse_program(year: int, base: str, soup: BeautifulSoup) -> list[Paper]:
             slug = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
             if "keynote" in slug or slug.startswith(("opening-remarks", "award")):
                 continue
-            papers[url] = Paper(year, title, url)
+            papers.setdefault(url, Paper(year, title, url, category=paper_category(node), program_order=len(papers)))
     elif year in (2008, 2010):
         for a in soup.select("a[href]"):
             url = absolute_url(base, a["href"])
@@ -172,7 +200,7 @@ def parse_program(year: int, base: str, soup: BeautifulSoup) -> list[Paper]:
             if not heading:
                 raise DownloadError(f"Cannot find a title for {url}")
             title = clean_text(heading.get_text(" ", strip=True))
-            papers[url] = Paper(year, title, base, (url,))
+            papers[url] = Paper(year, title, base, (url,), category=paper_category(a, legacy=True), program_order=len(papers))
     else:
         for a in soup.select("a[href]"):
             href = a["href"].strip()
@@ -185,7 +213,7 @@ def parse_program(year: int, base: str, soup: BeautifulSoup) -> list[Paper]:
             if not title:
                 continue
             url = absolute_url(base, href)
-            papers[url] = Paper(year, title, url)
+            papers[url] = Paper(year, title, url, category=paper_category(a, legacy=True), program_order=len(papers))
     return list(papers.values())
 
 
@@ -462,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 record.setdefault("status", "not_selected")
         manifest = {"year": year, "edition_url": editions[year], "program_url": program_url,
+                    "categories_version": CATEGORY_VERSION,
                     "discovered": total, "selected": len(selected), "status": "in_progress",
                     "papers": list(records.values())}
         save_manifest(manifest_path, manifest)
