@@ -418,7 +418,14 @@ def retrieve_original(client: Client, paper: Paper, directory: Path, previous: d
         if not urls:
             base, soup = client.page(paper.page_url)
             parts = urlsplit(paper.page_url)
-            if parts.hostname in ('sigops.org', 'www.sigops.org') and parts.path.endswith('/schedule.html'):
+            if parts.hostname in ('asplos-conference.org', 'www.asplos-conference.org'):
+                from asplos import parse_program, enrich_links
+                matches = [p for p in parse_program(paper.year, base, soup)
+                           if clean_text(p.title).casefold() == clean_text(paper.title).casefold()]
+                if len(matches) == 1:
+                    enrich_links(client, paper.year, matches)
+                urls = list(matches[0].file_urls) if len(matches) == 1 else []
+            elif parts.hostname in ('sigops.org', 'www.sigops.org') and parts.path.endswith('/schedule.html'):
                 # A cached accepted-paper entry may acquire a PDF later. Read
                 # only this paper's links, never another paper in the program.
                 from sosp import parse_schedule
@@ -460,7 +467,7 @@ def retrieve_original(client: Client, paper: Paper, directory: Path, previous: d
 
 def paper_key(record: dict) -> str:
     parts = urlsplit(record['page_url'])
-    if parts.hostname in ('sigops.org', 'www.sigops.org') and parts.fragment.startswith('paper-'):
+    if parts.hostname in ('sigops.org', 'www.sigops.org', 'asplos-conference.org', 'www.asplos-conference.org') and parts.fragment.startswith('paper-'):
         return record['page_url']
     return (record.get("file_urls") or [record["page_url"]])[0]
 

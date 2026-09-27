@@ -48,6 +48,14 @@
     $('codex-back').textContent = cx.sessionView ? 'Sessions' : 'Back to session';
     if (cx.sessionView) requestAnimationFrame(fitTerminal);
   };
+  function renderSessionHeading() {
+    $('codex-session-title').textContent = cx.selected?.title || 'Choose a session';
+    $('codex-session-title').title = cx.selected?.title || '';
+    const scope = cx.selected?.scope_label || '';
+    $('codex-session-scope').textContent = scope ? `Scope: ${scope}` : '';
+    $('codex-session-scope').title = scope;
+    $('codex-session-scope').hidden = !scope;
+  }
   $('toggle-codex').onclick = () => toggle();
   $('codex-back').onclick = () => {
     if (cx.sessionView) { showSession(false); refreshSessions().catch(e => error(e.message)); }
@@ -99,7 +107,7 @@
     const session = cx.sessions.find(s => s.id === previous);
     if (session) {
       cx.selected = session;
-      $('codex-session-title').textContent = session.title;
+      renderSessionHeading();
       $('codex-rename').hidden = false;
       $('codex-reconnect').hidden = false;
       showSession(false);
@@ -212,7 +220,7 @@
     const result = await request('/scope', 'POST', {scope: cx.draft});
     if (cx.selected && cx.selected.scope_id !== result.scope_id) {
       ++cx.connection; cx.controller?.abort(); cx.input = ''; cx.running = false; cx.selected = null;
-      $('codex-session-title').textContent = 'Choose a session'; $('codex-terminal-status').textContent = '';
+      renderSessionHeading(); $('codex-terminal-status').textContent = '';
       for (const id of ['codex-terminal', 'codex-command-bar', 'codex-rename', 'codex-reconnect', 'codex-stop']) $(id).hidden = true;
       $('codex-welcome').hidden = false;
       showSession(false);
@@ -311,7 +319,7 @@
     const connection = ++cx.connection;
     cx.controller?.abort(); cx.input = ''; cx.running = false;
     cx.selected = session; cx.cursor = 0; cx.generation = null;
-    $('codex-session-title').textContent = session.title;
+    renderSessionHeading();
     $('codex-terminal-status').textContent = 'Connecting…';
     $('codex-reconnect').hidden = true; $('codex-stop').hidden = true;
     $('codex-rename').hidden = false;
@@ -324,6 +332,7 @@
         cols: Math.max(20, cx.terminal.cols), rows: Math.max(5, cx.terminal.rows)});
       if (connection !== cx.connection) return;
       cx.selected = result.session; cx.running = true;
+      renderSessionHeading();
       $('codex-terminal-status').textContent = 'Connected'; $('codex-stop').hidden = false;
       cx.connecting = false;
       if (cx.open && cx.sessionView) cx.terminal.focus();
@@ -393,7 +402,7 @@
     event.preventDefault();
     try {
       const result = await request(`/sessions/${cx.selected.id}`, 'PATCH', {title: $('codex-rename-title').value});
-      cx.selected = result.session; $('codex-session-title').textContent = cx.selected.title;
+      cx.selected = result.session; renderSessionHeading();
       $('codex-rename-dialog').close(); await refreshSessions();
     } catch (e) { error(e.message); }
   };

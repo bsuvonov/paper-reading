@@ -30,7 +30,10 @@
 .codex-session strong { display: block; font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
 .codex-session small { display: block; font-size: 10px; color: var(--muted); margin-top: 5px; }
 .codex-terminal-toolbar { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 11px; }
-#codex-session-title { flex: 1; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.codex-session-info { flex: 1; min-width: 100px; overflow: hidden; }
+#codex-session-title, #codex-session-scope { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#codex-session-title { font-weight: 550; }
+#codex-session-scope { margin-top: 3px; font-size: 10px; color: var(--muted); }
 #codex-terminal-status { color: var(--muted); }
 #codex-terminal { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 #codex-terminal .xterm { height: 100%; padding: 10px; }

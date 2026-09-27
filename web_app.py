@@ -111,7 +111,45 @@ class Library:
                                outline_status=outline.get('status'), section_count=len(outline.get('sections', [])),
                                source_url=None, error=None, _path=paper.path, _record={},
                                _manifest=None, _outline=outline)
+        if self.project['kind'] == 'local':
+            categories = read_json(self.root / 'categories.json')
+            for row in rows.values():
+                row['category'] = categories.get(row['id'], row['category'])
+                row['program_order'] = None
         return sorted(rows.values(), key=lambda r: (-int(r['year']) if r['year'].isdigit() else 0, r['title'].lower()))
+
+    def category_name(self, value, rows):
+        if self.project['kind'] != 'local':
+            raise ValueError('Categories can be edited only in local projects.')
+        if not isinstance(value, str):
+            raise ValueError('Enter a category name or leave it blank for Uncategorized.')
+        name = ' '.join(value.split())
+        if len(name) > 100:
+            raise ValueError('Category names must be at most 100 characters.')
+        if name.casefold() == 'uncategorized':
+            return ''
+        return next((r['category'] for r in rows if r['category'].casefold() == name.casefold()), name)
+
+    def set_category(self, row, value):
+        name = self.category_name(value, self.catalog())
+        path = self.root / 'categories.json'
+        categories = read_json(path)
+        categories[row['id']] = name
+        extractor.write_json(path, categories)
+        return name
+
+    def rename_category(self, previous, value):
+        rows = self.catalog()
+        previous = self.category_name(previous, rows)
+        affected = [row for row in rows if row['category'] == previous]
+        if not previous or not affected:
+            raise ValueError('Choose an existing category to edit.')
+        name = self.category_name(value, [row for row in rows if row['category'] != previous])
+        path = self.root / 'categories.json'
+        categories = read_json(path)
+        categories.update({row['id']: name for row in affected})
+        extractor.write_json(path, categories)
+        return name, len(affected)
 
     def year_status(self, rows):
         statuses = {}
@@ -200,6 +238,10 @@ class Library:
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(path, destination)
         extractor.write_comparison(self.outline_records(), self.outlines)
+        categories = read_json(self.root / 'categories.json')
+        if row['id'] in categories:
+            del categories[row['id']]
+            extractor.write_json(self.root / 'categories.json', categories)
 
 
 class Jobs:
@@ -554,7 +596,8 @@ def create_app(root=ROOT):
             data = uploaded.read(100 * 1024 * 1024 + 1)
             title = request.form.get('title', '').strip() or Path(uploaded.filename).stem
             record = save_pdf(selected, data, title, 'upload:' + hashlib.sha256(data).hexdigest())
-        return jsonify(title=record['title']), 201
+            row = next(row for row in selected.catalog() if row['_record'].get('sha256') == record['sha256'])
+        return jsonify(title=record['title'], paper_id=row['id']), 201
 
     @app.get('/api/papers/<ident>')
     def detail(ident):
@@ -563,6 +606,28 @@ def create_app(root=ROOT):
         if not row:
             abort(404)
         return jsonify(selected.detail(row))
+
+    @app.patch('/api/papers/<ident>')
+    def categorize_paper(ident):
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or 'category' not in payload:
+            raise ValueError('Choose a category for this paper.')
+        with edit_library():
+            selected = selected_library()
+            row = selected.get(ident)
+            if not row:
+                abort(404)
+            name = selected.set_category(row, payload['category'])
+        return jsonify(category=name)
+
+    @app.patch('/api/projects/<ident>/categories')
+    def edit_category(ident):
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not {'category', 'name'} <= payload.keys():
+            raise ValueError('Choose a category and its new name.')
+        with edit_library():
+            name, count = Library(root, ident).rename_category(payload['category'], payload['name'])
+        return jsonify(category=name, count=count)
 
     @app.delete('/api/papers/<ident>')
     def remove_paper(ident):

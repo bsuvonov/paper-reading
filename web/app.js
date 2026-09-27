@@ -10,6 +10,9 @@ state.yearStatus = {};
 state.pendingCatalog = null;
 state.startingCatalog = false;
 state.catalogFailure = null;
+state.draggedPaper = null;
+state.movingPaper = null;
+state.paperListPending = false;
 try {
   state.collapsedCategories = new Set(JSON.parse(localStorage.getItem('paper-collapsed-categories') || '[]'));
 } catch { state.collapsedCategories = new Set(); }
@@ -51,7 +54,7 @@ function downloadTask(paperId, projectId = state.projectId) {
 }
 function updateTaskButton(button) {
   if (button.dataset.action !== 'download') {
-    button.disabled = state.job?.status === 'running';
+    button.disabled = state.job?.status === 'running' || Boolean(state.movingPaper);
     return;
   }
   const task = downloadTask(button.dataset.paperId, button.dataset.projectId);
@@ -71,32 +74,118 @@ function filteredPapers() {
 function paperCard(paper) {
   const button = element('button', 'paper-card' + (state.selected === paper.id ? ' selected' : ''));
   button.setAttribute('aria-pressed', String(state.selected === paper.id));
+  const moving = state.movingPaper?.projectId === state.projectId && state.movingPaper.paperId === paper.id;
+  button.setAttribute('aria-busy', String(moving));
+  if (paper.project_kind === 'local') {
+    button.draggable = !state.movingPaper;
+    button.title = 'Drag onto a category to move this paper';
+    button.ondragstart = event => {
+      if (state.job?.status === 'running' || state.movingPaper || savingCategory) {
+        event.preventDefault();
+        return;
+      }
+      state.draggedPaper = {projectId: state.projectId, paperId: paper.id};
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('application/x-paper-reading-paper', JSON.stringify(state.draggedPaper));
+      button.classList.add('dragging');
+      $('paper-list').classList.add('dragging-paper');
+    };
+    button.ondragend = endPaperDrag;
+  }
   const meta = element('span', 'paper-meta');
   meta.append(element('span', 'year-tag', paper.project_kind === 'local' ? 'Local paper' : `${paper.project_name} ${paper.year}`));
   const task = downloadTask(paper.id);
-  const status = task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : paper.pdf_unavailable ? 'No PDF found' : 'Not downloaded';
+  const status = moving ? 'Moving…' : task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : paper.pdf_unavailable ? 'No PDF found' : 'Not downloaded';
   meta.append(element('span', 'badge' + (paper.downloaded ? ' ready' : ''), status));
   if (paper.section_count) meta.append(element('span', 'badge' + (paper.outline_status === 'needs_review' ? ' review' : ''), 'Outline'));
   button.append(meta, element('span', 'paper-title', paper.title));
   button.onclick = () => selectPaper(paper.id);
   return button;
 }
+function endPaperDrag() {
+  state.draggedPaper = null;
+  $('paper-list').classList.remove('dragging-paper');
+  $('paper-list').querySelectorAll('.dragging, .drop-target').forEach(node => node.classList.remove('dragging', 'drop-target'));
+  if (state.paperListPending) {
+    state.paperListPending = false;
+    renderList();
+  }
+}
+function categoryDropTarget(details, category) {
+  const projectId = state.projectId;
+  const name = category === 'Uncategorized' ? '' : category;
+  function draggedPaper(event) {
+    const drag = state.draggedPaper;
+    if (!drag || drag.projectId !== projectId || state.projectId !== projectId ||
+        state.project?.kind !== 'local' || state.movingPaper || savingCategory || state.job?.status === 'running' ||
+        !Array.from(event.dataTransfer?.types || []).includes('application/x-paper-reading-paper')) return null;
+    return state.papers.find(p => p.id === drag.paperId && (p.category || '') !== name);
+  }
+  details.ondragenter = details.ondragover = event => {
+    if (!draggedPaper(event)) {
+      details.classList.remove('drop-target');
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    details.classList.add('drop-target');
+  };
+  details.ondragleave = event => {
+    if (!details.contains(event.relatedTarget)) details.classList.remove('drop-target');
+  };
+  details.ondrop = event => {
+    const paper = draggedPaper(event);
+    if (!paper) return;
+    event.preventDefault();
+    event.stopPropagation();
+    endPaperDrag();
+    movePaperToCategory(projectId, paper.id, name);
+  };
+}
+async function movePaperToCategory(projectId, paperId, category) {
+  state.movingPaper = {projectId, paperId};
+  document.querySelectorAll('[data-task]').forEach(updateTaskButton);
+  renderList();
+  let saved = false;
+  try {
+    const result = await api(`/api/papers/${paperId}?project=${encodeURIComponent(projectId)}`, writeOptions('PATCH', {category}));
+    saved = true;
+    state.collapsedCategories.delete(JSON.stringify([projectId, 'local', result.category || 'Uncategorized']));
+    localStorage.setItem('paper-collapsed-categories', JSON.stringify([...state.collapsedCategories]));
+    if (state.projectId === projectId) await refreshLibrary();
+  } catch (error) {
+    notify((saved ? 'Paper moved, but the library could not refresh: ' : 'Could not move paper: ') + error.message);
+  } finally {
+    state.movingPaper = null;
+    document.querySelectorAll('[data-task]').forEach(updateTaskButton);
+    renderList();
+  }
+}
 function categoryGroups(papers) {
+  const local = state.project?.kind === 'local';
   const groups = new Map();
   for (const paper of papers) {
     const category = paper.category || 'Uncategorized';
-    const key = JSON.stringify([state.projectId, paper.year, category]);
+    const key = JSON.stringify([state.projectId, local ? 'local' : paper.year, category]);
     if (!groups.has(key)) groups.set(key, {key, category, year: paper.year, papers: [], order: Infinity});
     const group = groups.get(key);
     group.papers.push(paper);
-    group.order = Math.min(group.order, paper.program_order ?? Infinity);
+    group.order = Math.min(group.order, local ? Infinity : paper.program_order ?? Infinity);
   }
-  return [...groups.values()].sort((a, b) => Number(b.year) - Number(a.year) ||
+  if (local && papers.length && !papers.some(p => !p.category)) {
+    const key = JSON.stringify([state.projectId, 'local', 'Uncategorized']);
+    groups.set(key, {key, category: 'Uncategorized', year: 'local', papers: [], order: Infinity});
+  }
+  return [...groups.values()].sort((a, b) => (!local && Number(b.year) - Number(a.year)) ||
     (a.category === 'Uncategorized') - (b.category === 'Uncategorized') ||
     a.order - b.order || a.category.localeCompare(b.category));
 }
 function renderList() {
+  // Replacing the dragged DOM node would cancel a drag during background polling.
+  if (state.draggedPaper) { state.paperListPending = true; return; }
+  const local = state.project?.kind === 'local';
   const papers = filteredPapers();
+  $('categorize-paper').hidden = !local || !state.papers.some(paper => paper.id === state.selected);
   const list = $('paper-list');
   const scrollTop = list.scrollTop;
   const focusedCategory = list.contains(document.activeElement) ? document.activeElement.dataset.categoryKey : null;
@@ -112,15 +201,30 @@ function renderList() {
     list.append(note);
   }
   $('paper-count').textContent = papers.length;
-  if (state.project?.kind === 'conference') {
+  if (state.project) {
     for (const group of categoryGroups(papers)) {
       const details = element('details', 'paper-category');
+      if (local) {
+        details.classList.toggle('empty-category', group.papers.length === 0);
+        categoryDropTarget(details, group.category);
+      }
       details.open = Boolean($('search').value.trim()) || !state.collapsedCategories.has(group.key);
       const summary = element('summary', 'category-heading');
       summary.dataset.categoryKey = group.key;
-      const title = $('year').value ? group.category : `${group.year} · ${group.category}`;
+      const title = local || $('year').value ? group.category : `${group.year} · ${group.category}`;
       summary.append(element('span', 'category-title', title), element('span', 'category-count', group.papers.length));
+      if (local && group.category !== 'Uncategorized') {
+        const edit = element('button', 'quiet category-edit', '⋯');
+        edit.type = 'button';
+        edit.title = 'Edit category';
+        edit.setAttribute('aria-label', 'Edit category ' + group.category);
+        edit.dataset.task = 'true';
+        updateTaskButton(edit);
+        edit.onclick = () => categoryDialog(null, group.category);
+        summary.append(edit);
+      }
       summary.onclick = event => {
+        if (event.target.closest('button')) return;
         event.preventDefault();
         details.open = !details.open;
         if (details.open) state.collapsedCategories.delete(group.key);
@@ -128,13 +232,14 @@ function renderList() {
         localStorage.setItem('paper-collapsed-categories', JSON.stringify([...state.collapsedCategories]));
       };
       summary.onkeydown = event => {
+        if (event.target !== summary) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           if (!event.repeat) summary.click();
         }
       };
       const content = element('div', 'category-papers');
-      group.papers.sort((a, b) => (a.program_order ?? Infinity) - (b.program_order ?? Infinity) || a.title.localeCompare(b.title));
+      group.papers.sort((a, b) => (!local && (a.program_order ?? Infinity) - (b.program_order ?? Infinity)) || a.title.localeCompare(b.title));
       for (const paper of group.papers) content.append(paperCard(paper));
       details.append(summary, content);
       list.append(details);
@@ -228,14 +333,17 @@ function renderOutline() {
 }
 function showDocument(paper, section = null) {
   const container = $('viewer-container');
+  const url = section?.url || paper.viewer_url;
+  if (paper.viewer_type === 'pdf' && section?.page && PaperPDF.jumpTo(url, section.page)) return;
+  PaperPDF.close();
   if (paper.viewer_url) {
-    let url = section?.url || paper.viewer_url;
-    if (paper.viewer_type === 'pdf') url += '#page=' + (section?.page || 1) + '&view=FitH';
-    // A new frame makes PDF page navigation work across browser PDF viewers.
     const frame = element('iframe');
     frame.title = paper.title;
-    if (paper.viewer_type !== 'pdf') frame.setAttribute('sandbox', '');
-    frame.src = url;
+    if (paper.viewer_type === 'pdf') PaperPDF.prepare(frame, paper, url, section?.page);
+    else {
+      frame.setAttribute('sandbox', '');
+      frame.src = url;
+    }
     container.replaceChildren(frame);
     return;
   }
@@ -539,11 +647,14 @@ function renderProjects() {
   const local = state.project?.kind === 'local';
   $('manage-project').hidden = !local;
   $('add-paper').hidden = !local;
+  $('upload-papers').hidden = !local;
   $('download-year').hidden = local;
   $('year').hidden = local;
   $('availability').style.width = local ? '100%' : '';
 }
 function clearSelection() {
+  endPaperDrag();
+  PaperPDF.close();
   state.request++;
   state.selected = null;
   state.detail = null;
@@ -613,31 +724,82 @@ $('archive-project').onclick = async () => {
     await switchProject('osdi');
   } catch (error) { $('project-error').textContent = error.message; }
 };
-$('add-paper').onclick = () => {
+let importTarget = null;
+let importing = false;
+function addPaperDialog(upload) {
+  if (importing) return;
+  importTarget = {projectId: state.projectId, upload};
   $('add-form').reset();
+  $('add-dialog-title').textContent = upload ? 'Upload PDFs' : 'Add paper by URL';
+  $('import-url-fields').hidden = upload;
+  $('paper-url').disabled = upload;
+  $('paper-url').required = !upload;
+  $('import-file-fields').hidden = !upload;
+  $('paper-file').disabled = !upload;
+  $('paper-file').required = upload;
+  $('import-title-field').hidden = false;
+  $('import-progress').hidden = true;
   $('import-error').textContent = '';
   $('add-dialog').showModal();
+  $(upload ? 'paper-file' : 'paper-url').focus();
+}
+$('add-paper').onclick = () => addPaperDialog(false);
+$('upload-papers').onclick = () => addPaperDialog(true);
+$('paper-file').onchange = () => {
+  $('import-title-field').hidden = $('paper-file').files.length > 1;
+  $('import-error').textContent = '';
 };
-$('paper-url').oninput = () => { if ($('paper-url').value) $('paper-file').value = ''; };
-$('paper-file').onchange = () => { if ($('paper-file').files.length) $('paper-url').value = ''; };
+$('add-dialog').oncancel = event => { if (importing) event.preventDefault(); };
 $('add-form').onsubmit = async event => {
   event.preventDefault();
-  const file = $('paper-file').files[0];
+  if (importing || !importTarget) return;
+  const {projectId, upload} = importTarget;
+  const files = [...$('paper-file').files];
   const url = $('paper-url').value.trim();
-  if (!file && !url) { $('import-error').textContent = 'Enter a paper URL or choose a PDF.'; return; }
-  $('import-submit').disabled = true;
+  const title = $('import-title').value.trim();
+  $('import-error').textContent = '';
+  if (upload && !files.length) { $('import-error').textContent = 'Choose a PDF to upload.'; return; }
+  const oversized = files.find(file => file.size > 100 * 1024 * 1024);
+  if (oversized) { $('import-error').textContent = `${oversized.name} exceeds the 100 MB limit.`; return; }
+  importing = true;
+  $('add-form').querySelectorAll('input, button').forEach(control => control.disabled = true);
+  let lastPaperId = null;
+  let completed = 0;
   try {
-    if (file) {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('title', $('import-title').value);
-      await api('/api/projects/' + state.projectId + '/upload', {method: 'POST', headers: {'X-Library-Token': state.token}, body: form});
-      await refreshLibrary();
-    } else if (!await startJob({action: 'import_url', url, title: $('import-title').value})) return;
+    if (upload) {
+      $('import-progress').hidden = false;
+      for (const file of files) {
+        $('import-progress').textContent = `Uploading ${completed + 1} of ${files.length}: ${file.name}`;
+        const form = new FormData();
+        form.append('file', file);
+        form.append('title', files.length === 1 ? title : '');
+        const result = await api('/api/projects/' + projectId + '/upload', {method: 'POST', headers: {'X-Library-Token': state.token}, body: form});
+        lastPaperId = result.paper_id;
+        completed++;
+      }
+    } else if (!await startJob({action: 'import_url', project_id: projectId, url, title})) return;
     $('add-dialog').close();
     switchTab('papers');
-  } catch (error) { $('import-error').textContent = error.message; }
-  finally { $('import-submit').disabled = false; }
+  } catch (error) {
+    $('import-error').textContent = upload
+      ? `${files[completed]?.name || 'Upload'}: ${error.message}${completed ? ` ${completed} PDF(s) already saved; retrying will skip duplicates.` : ''}`
+      : error.message;
+  } finally {
+    if (completed && projectId === state.projectId) {
+      try {
+        $('search').value = '';
+        $('availability').value = 'all';
+        await refreshLibrary();
+        if (projectId === state.projectId && lastPaperId) await selectPaper(lastPaperId);
+        switchTab('papers');
+      } catch (error) { notify(`PDFs saved. Could not refresh the library: ${error.message}`); }
+    }
+    importing = false;
+    $('import-progress').hidden = true;
+    $('add-form').querySelectorAll('input, button').forEach(control => control.disabled = false);
+    $('paper-url').disabled = upload;
+    $('paper-file').disabled = !upload;
+  }
 };
 $('save-to-project').onclick = () => {
   const projects = state.projects.filter(p => p.kind === 'local' && p.id !== state.projectId);
@@ -660,3 +822,58 @@ async function removeSelectedPaper() {
     await refreshLibrary();
   } catch (error) { notify(error.message); }
 }
+
+let categoryTarget = null;
+let savingCategory = false;
+function categoryDialog(paper, category = '') {
+  if (savingCategory || state.movingPaper || state.project?.kind !== 'local') return;
+  categoryTarget = {projectId: state.projectId, paperId: paper?.id, category: paper?.category || category};
+  $('category-dialog-title').textContent = paper ? 'Categorize paper' : 'Edit category';
+  $('category-context').textContent = paper ? paper.title : `${state.papers.filter(p => p.category === category).length} papers in “${category}”`;
+  $('category-name').value = categoryTarget.category;
+  const names = [...new Set(state.papers.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  $('category-suggestions').replaceChildren(...names.map(name => new Option(name, name)));
+  $('category-help').textContent = paper
+    ? 'Choose an existing category or enter a new name. Leave blank for Uncategorized.'
+    : 'An existing name merges the groups. Removing the category keeps its papers in Uncategorized.';
+  $('remove-category').hidden = Boolean(paper);
+  $('category-error').textContent = '';
+  $('category-dialog').showModal();
+  $('category-name').focus();
+  $('category-name').select();
+}
+$('categorize-paper').onclick = () => {
+  const paper = state.papers.find(p => p.id === state.selected);
+  if (paper) categoryDialog(paper);
+};
+$('category-dialog').oncancel = event => { if (savingCategory) event.preventDefault(); };
+async function saveCategory(name) {
+  if (savingCategory || !categoryTarget) return;
+  const target = categoryTarget;
+  savingCategory = true;
+  $('category-error').textContent = '';
+  $('category-form').querySelectorAll('input, button').forEach(control => control.disabled = true);
+  try {
+    const url = target.paperId ? `/api/papers/${target.paperId}?project=${encodeURIComponent(target.projectId)}`
+      : `/api/projects/${target.projectId}/categories`;
+    const payload = target.paperId ? {category: name} : {category: target.category, name};
+    const result = await api(url, writeOptions('PATCH', payload));
+    const key = category => JSON.stringify([target.projectId, 'local', category || 'Uncategorized']);
+    state.collapsedCategories.delete(key(result.category));
+    if (!target.paperId) state.collapsedCategories.delete(key(target.category));
+    localStorage.setItem('paper-collapsed-categories', JSON.stringify([...state.collapsedCategories]));
+    $('category-dialog').close();
+    if (state.projectId === target.projectId) {
+      $('search').value = '';
+      await refreshLibrary();
+    }
+  } catch (error) {
+    if ($('category-dialog').open) $('category-error').textContent = error.message;
+    else notify(error.message);
+  } finally {
+    savingCategory = false;
+    $('category-form').querySelectorAll('input, button').forEach(control => control.disabled = false);
+  }
+}
+$('category-form').onsubmit = event => { event.preventDefault(); saveCategory($('category-name').value); };
+$('remove-category').onclick = () => saveCategory('');

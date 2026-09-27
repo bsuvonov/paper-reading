@@ -276,13 +276,17 @@ class WebAppTests(unittest.TestCase):
     def test_project_papers_are_isolated_persistent_and_deduplicated(self):
         first, headers = self.create_local('First')
         second, _ = self.create_local('Second')
-        self.assertEqual(self.upload_local(first, headers).status_code, 201)
-        self.assertEqual(self.upload_local(first, headers).status_code, 201)
+        uploaded = self.upload_local(first, headers)
+        duplicate = self.upload_local(first, headers)
+        self.assertEqual(uploaded.status_code, 201)
+        self.assertEqual(duplicate.status_code, 201)
         a = self.client.get('/api/library?project=' + first).get_json()
         b = self.client.get('/api/library?project=' + second).get_json()
         self.assertEqual(len(a['papers']), 1)
         self.assertEqual(len(b['papers']), 0)
         paper_id = a['papers'][0]['id']
+        self.assertEqual(uploaded.get_json()['paper_id'], paper_id)
+        self.assertEqual(duplicate.get_json()['paper_id'], paper_id)
         self.assertEqual(self.client.get('/api/papers/' + paper_id + '?project=' + second).status_code, 404)
         detail = self.client.get('/api/papers/' + paper_id + '?project=' + first).get_json()
         self.assertIn('/project-files/' + first + '/', detail['viewer_url'])
@@ -291,10 +295,40 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(len(web.Library(self.root, first).catalog()), 1)
         self.assertEqual(len(self.catalog()['papers']), 2)
 
+    def test_upload_opens_existing_url_import_and_keeps_its_identity(self):
+        ident, headers = self.create_local()
+        library = web.Library(self.root, ident)
+        projects.save_pdf(library, self.pdf.read_bytes(), 'Original title', 'https://example.org/paper.pdf')
+        existing = library.catalog()[0]
+        response = self.upload_local(ident, headers)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json(), dict(title='Original title', paper_id=existing['id']))
+        self.assertEqual(len(library.catalog()), 1)
+
+    def test_upload_multiple_papers_with_same_filename_and_optional_title(self):
+        ident, headers = self.create_local()
+        first = self.upload_local(ident, headers).get_json()
+        with pymupdf.open() as pdf:
+            pdf.new_page().insert_text((72, 72), 'Another uploaded paper')
+            data = pdf.tobytes()
+        response = self.client.post('/api/projects/' + ident + '/upload', headers=headers,
+                                    data={'file': (io.BytesIO(data), 'Imported.pdf'), 'title': 'My paper title'})
+        self.assertEqual(response.status_code, 201)
+        second = response.get_json()
+        self.assertEqual(second['title'], 'My paper title')
+        self.assertNotEqual(first['paper_id'], second['paper_id'])
+        self.assertEqual(len(web.Library(self.root, ident).catalog()), 2)
+        detail = self.client.get('/api/papers/' + second['paper_id'] + '?project=' + ident).get_json()
+        self.assertTrue(detail['downloaded'])
+        with self.client.get(detail['viewer_url']) as response:
+            self.assertEqual(response.data, data)
+
     def test_imports_are_local_only_and_reject_invalid_content(self):
         ident, headers = self.create_local()
         self.assertEqual(self.upload_local('osdi', headers).status_code, 400)
         self.assertEqual(self.upload_local(ident, headers, b'<html>Not a PDF</html>').status_code, 400)
+        self.assertEqual(self.upload_local(ident, headers, b'%PDF-1.7\ninvalid data\n%%EOF').status_code, 400)
+        self.assertEqual(self.client.post('/api/projects/' + ident + '/upload', headers=headers).status_code, 400)
         for payload in [dict(action='import_url', project_id='osdi', url='https://example.org/a.pdf'),
                         dict(action='import_url', project_id=ident, url='file:///etc/passwd'),
                         dict(action='catalog', project_id=ident)]:
@@ -323,6 +357,87 @@ class WebAppTests(unittest.TestCase):
         rows = library.catalog()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['title'], 'My existing paper')
+
+    def test_local_categories_persist_without_changing_paper_identity_or_reader(self):
+        ident, headers = self.create_local()
+        paper_id = self.upload_local(ident, headers).get_json()['paper_id']
+        url = '/api/papers/' + paper_id + '?project=' + ident
+        before = self.client.get(url).get_json()
+        response = self.client.patch(url, json={'category': '  Memory   systems  '}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['category'], 'Memory systems')
+        detail = self.client.get(url).get_json()
+        self.assertEqual(detail['category'], 'Memory systems')
+        self.assertEqual(detail['viewer_url'], before['viewer_url'])
+        self.assertEqual(detail['id'], before['id'])
+        self.assertEqual(web.Library(self.root, ident).catalog()[0]['category'], 'Memory systems')
+        self.upload_local(ident, headers)
+        self.assertEqual(self.client.get(url).get_json()['category'], 'Memory systems')
+        self.client.patch('/api/projects/' + ident, json={'name': 'Renamed project'}, headers=headers)
+        self.assertEqual(self.client.get(url).get_json()['category'], 'Memory systems')
+        for value in ['', 'Uncategorized']:
+            response = self.client.patch(url, json={'category': value}, headers=headers)
+            self.assertEqual(response.get_json()['category'], '')
+            self.assertEqual(self.client.get(url).get_json()['category'], '')
+
+    def test_local_category_rename_merge_remove_and_loose_files(self):
+        ident, headers = self.create_local()
+        library = web.Library(self.root, ident)
+        self.upload_local(ident, headers)
+        for year, name in [('local', 'Other paper.pdf'), ('2025', 'Loose paper.pdf')]:
+            folder = library.papers / year
+            folder.mkdir(exist_ok=True)
+            (folder / name).write_bytes(self.pdf.read_bytes())
+        rows = library.catalog()
+        before = {row['id'] for row in rows}
+        for row, category in zip(rows, ['Memory', 'memory', 'Networking']):
+            response = self.client.patch('/api/papers/' + row['id'] + '?project=' + ident,
+                                         json={'category': category}, headers=headers)
+            self.assertEqual(response.status_code, 200)
+        self.assertEqual([row['category'] for row in library.catalog()].count('Memory'), 2)
+        endpoint = '/api/projects/' + ident + '/categories'
+        response = self.client.patch(endpoint, json={'category': 'Memory', 'name': 'MEMORY'}, headers=headers)
+        self.assertEqual(response.get_json(), {'category': 'MEMORY', 'count': 2})
+        response = self.client.patch(endpoint, json={'category': 'MEMORY', 'name': 'networking'}, headers=headers)
+        self.assertEqual(response.get_json(), {'category': 'Networking', 'count': 2})
+        self.assertEqual({row['category'] for row in library.catalog()}, {'Networking'})
+        response = self.client.patch(endpoint, json={'category': 'Networking', 'name': ''}, headers=headers)
+        self.assertEqual(response.get_json(), {'category': '', 'count': 3})
+        self.assertEqual({row['category'] for row in library.catalog()}, {''})
+        self.assertEqual({row['id'] for row in library.catalog()}, before)
+        self.assertTrue(all(row['downloaded'] for row in library.catalog()))
+
+    def test_category_edits_validate_input_and_are_local_and_project_scoped(self):
+        first, headers = self.create_local('First')
+        second, _ = self.create_local('Second')
+        paper_id = self.upload_local(first, headers).get_json()['paper_id']
+        endpoint = '/api/papers/' + paper_id + '?project=' + first
+        self.assertEqual(self.client.patch(endpoint, json={'category': 'Memory'}).status_code, 403)
+        for payload in [[], {}, {'category': None}, {'category': ['A']}, {'category': 'x' * 101}]:
+            self.assertEqual(self.client.patch(endpoint, json=payload, headers=headers).status_code, 400)
+        self.assertEqual(self.client.patch('/api/papers/' + paper_id + '?project=' + second,
+                                         json={'category': 'Memory'}, headers=headers).status_code, 404)
+        conference = self.catalog()['papers'][0]['id']
+        self.assertEqual(self.client.patch('/api/papers/' + conference,
+                                         json={'category': 'Memory'}, headers=headers).status_code, 400)
+        for project, payload in [('osdi', {'category': 'Memory', 'name': 'New'}),
+                                 (first, {'category': '', 'name': 'New'}),
+                                 (first, {'category': 'Missing', 'name': 'New'}), (first, [])]:
+            self.assertEqual(self.client.patch('/api/projects/' + project + '/categories',
+                                             json=payload, headers=headers).status_code, 400)
+        self.assertFalse((self.root / 'categories.json').exists())
+        self.assertFalse((web.Library(self.root, second).root / 'categories.json').exists())
+        self.app.config['JOBS'].process = Mock(poll=Mock(return_value=None))
+        self.assertEqual(self.client.patch(endpoint, json={'category': 'Memory'}, headers=headers).status_code, 409)
+
+    def test_removing_local_paper_cleans_up_category_assignment(self):
+        ident, headers = self.create_local()
+        paper_id = self.upload_local(ident, headers).get_json()['paper_id']
+        endpoint = '/api/papers/' + paper_id + '?project=' + ident
+        self.client.patch(endpoint, json={'category': 'Memory'}, headers=headers)
+        self.assertEqual(self.client.delete(endpoint, headers=headers).status_code, 200)
+        path = web.Library(self.root, ident).root / 'categories.json'
+        self.assertNotIn(paper_id, json.loads(path.read_text()))
 
     def test_url_import_resolves_metadata_and_keeps_project_isolation(self):
         ident, _ = self.create_local()

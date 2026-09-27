@@ -27,19 +27,22 @@ Open **http://127.0.0.1:8000**. If the port is busy, use
 
 ## Features
 
-- **Conference libraries:** OSDI, SOSP, NSDI, FAST, USENIX ATC, and USENIX Security,
+- **Conference libraries:** OSDI, SOSP, ASPLOS, NSDI, FAST, USENIX ATC, and USENIX Security,
   organized by year and collapsible session categories.
 - **Queued downloads:** browse titles before downloading; save individual papers
   or a selected year. Papers open automatically when ready.
-- **Local projects:** create reading collections, import papers by URL or PDF
-  upload, and save conference papers to projects.
+- **Local projects:** create reading collections, use **Add URL** or **Upload PDFs**
+  (one or more files), and save conference papers to projects. Select a paper and use
+  **Category** to create collapsible groups, then drag papers onto a group to move
+  them. Uploads open in the reader.
 - **Outlines:** generate section headings and click them to navigate the paper.
   Scanned papers can use local OCR; extracted headings may need review.
 - **Reader controls:** resize or hide the sidebar, toggle search, and use dark
-  mode while preserving the paper's original colors.
+  mode while preserving the paper's original colors. Each PDF remembers its exact
+  reading position and zoom in your browser, across paper switches and reloads.
 
-Blocked ACM/SIGOPS downloads fall back to matching public copies, which may be
-preprints. Papers without an accessible copy show **No PDF found**; use
+Blocked ACM, SIGOPS, or ASPLOS downloads fall back to matching public copies,
+which may be preprints. Papers without an accessible copy show **No PDF found**; use
 **Check again** to retry later. Keep the server running for queued tasks.
 
 ## Codex sidebar

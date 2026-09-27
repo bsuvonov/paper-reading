@@ -14,11 +14,13 @@ import pymupdf
 import download_osdi as downloader
 import extract_outlines as extractor
 import sosp
+import asplos
 
 
 CONFERENCES = {
     'osdi': ('OSDI', [1994, 1996, 1999, *range(2000, 2021, 2), *range(2021, date.today().year + 1)]),
     'sosp': ('SOSP', sosp.YEARS),
+    'asplos': ('ASPLOS', asplos.YEARS),
     'nsdi': ('NSDI', list(range(2012, date.today().year + 1))),
     'fast': ('FAST', list(range(2012, date.today().year + 1))),
     'atc': ('USENIX ATC', list(range(2012, min(date.today().year, 2025) + 1))),
@@ -87,10 +89,14 @@ class ProjectStore:
 
 
 def conference_url(conference, year):
+    if conference == 'asplos':
+        return asplos.edition_url(year)
     return sosp.edition_url(year) if conference == 'sosp' else f'https://www.usenix.org/conference/{conference}{year % 100:02d}'
 
 
 def discover_conference(client, conference, year):
+    if conference == 'asplos':
+        return asplos.discover(client, year)
     if conference == 'sosp':
         return sosp.discover(client, year)
     edition = conference_url(conference, year)
@@ -162,10 +168,13 @@ def save_pdf(library, data, title, source_url, resolved_url=None):
     if len(data) > 100 * 1024 * 1024:
         raise ValueError('The PDF exceeds the 100 MB limit.')
     downloader.validate_document(data, '.pdf')
-    with pymupdf.open(stream=data, filetype='pdf') as document:
-        if not len(document):
-            raise ValueError('The PDF has no pages.')
-        title = title.strip() or (document.metadata or {}).get('title', '').strip()
+    try:
+        with pymupdf.open(stream=data, filetype='pdf') as document:
+            if not len(document):
+                raise ValueError('The PDF has no pages.')
+            title = title.strip() or (document.metadata or {}).get('title', '').strip()
+    except pymupdf.FileDataError as exc:
+        raise ValueError('The file is not a readable PDF.') from exc
     if not title:
         title = unquote(Path(urlsplit(resolved_url or source_url).path).stem) or 'Untitled paper'
     title = downloader.clean_text(title)[:300]

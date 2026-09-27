@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/appearance.css">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
   <link rel="stylesheet" href="/static/codex.css">
+  <script src="/static/pdf-reader.js" defer></script>
   <script src="/static/app.js" defer></script>
   <script src="/static/vendor/xterm.js" defer></script>
   <script src="/static/vendor/addon-fit.js" defer></script>
@@ -32,7 +33,7 @@
       <div class="sidebar-tabs"><div class="tabs" role="tablist" aria-label="Sidebar view"><button id="papers-tab" role="tab" aria-selected="true" aria-controls="paper-list">Papers <span id="paper-count">0</span></button><button id="outline-tab" role="tab" aria-selected="false" aria-controls="outline-panel">Outline</button></div><button id="save-to-project" class="quiet" hidden>Save to project</button></div>
       <div id="paper-list" class="scroll-panel" role="tabpanel" aria-labelledby="papers-tab"></div>
       <div id="outline-panel" class="scroll-panel" role="tabpanel" aria-labelledby="outline-tab" hidden></div>
-      <div class="library-actions"><button id="download-year" class="primary" disabled>Download year</button><button id="add-paper" class="primary" data-task hidden>Add paper</button></div>
+      <div class="library-actions"><button id="download-year" class="primary" disabled>Download year</button><button id="add-paper" class="quiet" data-task hidden>Add URL</button><button id="upload-papers" class="primary" data-task hidden>Upload PDFs</button><button id="categorize-paper" class="quiet" data-task hidden>Category</button></div>
     </aside>
     <aside id="codex-sidebar" aria-label="Codex scopes and sessions" hidden>
       <div class="codex-sidebar-heading"><strong>Codex</strong><div class="codex-navigation"><button id="codex-current-paper" class="quiet">Current paper</button><button id="codex-back" class="quiet" hidden>Sessions</button></div></div>
@@ -73,7 +74,11 @@
       </div>
       <section id="codex-main" aria-label="Codex terminal" hidden>
         <div class="codex-terminal-toolbar">
-          <span id="codex-session-title">Choose a session</span><span id="codex-terminal-status" role="status"></span>
+          <div class="codex-session-info">
+            <span id="codex-session-title">Choose a session</span>
+            <span id="codex-session-scope" hidden></span>
+          </div>
+          <span id="codex-terminal-status" role="status"></span>
           <button id="codex-rename" class="quiet" hidden>Rename</button>
           <button id="codex-reconnect" class="quiet" hidden>Resume</button>
           <button id="codex-stop" class="quiet" hidden>Stop</button>
@@ -95,10 +100,29 @@
     <div id="archive-controls" hidden><hr><p>Remove this project from the library. Its papers will be kept in the archive folder.</p><button id="archive-project" class="danger">Archive project</button></div>
   </dialog>
   <dialog id="add-dialog">
-    <form id="add-form"><h2>Add paper</h2><label>Paper URL<input id="paper-url" type="url" placeholder="https://…/paper.pdf"></label><p class="field-hint">A direct PDF, arXiv link, or a paper page with a PDF link.</p><label>Or upload a PDF<input id="paper-file" type="file" accept="application/pdf,.pdf"></label><label>Title <span class="optional">(optional)</span><input id="import-title" maxlength="300"></label><p id="import-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close="add-dialog">Cancel</button><button type="submit" id="import-submit" class="primary">Add to project</button></div></form>
+    <form id="add-form">
+      <h2 id="add-dialog-title">Add paper by URL</h2>
+      <div id="import-url-fields"><label>Paper URL<input id="paper-url" type="url" placeholder="https://…/paper.pdf"></label><p class="field-hint">A direct PDF, arXiv link, or a paper page with a PDF link.</p></div>
+      <div id="import-file-fields" hidden><label>PDF files<input id="paper-file" type="file" accept="application/pdf,.pdf" multiple aria-describedby="upload-hint"></label><p id="upload-hint" class="field-hint">Choose one or more PDFs, up to 100 MB each. Filenames are used as titles.</p></div>
+      <label id="import-title-field">Title <span class="optional">(optional)</span><input id="import-title" maxlength="300"></label>
+      <p id="import-progress" class="field-hint" role="status" hidden></p>
+      <p id="import-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="import-cancel" class="quiet" data-close="add-dialog">Cancel</button><button type="submit" id="import-submit" class="primary">Add to project</button></div>
+    </form>
   </dialog>
   <dialog id="save-dialog">
     <form id="save-form"><h2>Save to a local project</h2><label>Project<select id="save-project" required></select></label><p id="save-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close="save-dialog">Cancel</button><button type="submit" class="primary">Save paper</button></div></form>
+  </dialog>
+  <dialog id="category-dialog" aria-labelledby="category-dialog-title">
+    <form id="category-form">
+      <h2 id="category-dialog-title">Categorize paper</h2>
+      <p id="category-context"></p>
+      <label>Category<input id="category-name" list="category-suggestions" maxlength="100" placeholder="Uncategorized" autocomplete="off" aria-describedby="category-help"></label>
+      <datalist id="category-suggestions"></datalist>
+      <p id="category-help" class="field-hint"></p>
+      <p id="category-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="remove-category" class="danger" hidden>Remove category</button><button type="button" class="quiet" data-close="category-dialog">Cancel</button><button type="submit" class="primary">Save</button></div>
+    </form>
   </dialog>
   <dialog id="codex-rename-dialog"><form id="codex-rename-form"><h2>Rename session</h2><label>Name<input id="codex-rename-title" required maxlength="160"></label><div class="dialog-actions"><button type="button" class="quiet" data-close="codex-rename-dialog">Cancel</button><button type="submit" class="primary">Save</button></div></form></dialog>
 </body>

@@ -28,7 +28,8 @@ def doi_for(paper):
 
 def eligible(paper):
     # Conference sites can also withdraw their previously public PDF copies.
-    return any(urlsplit(url).hostname in ('dl.acm.org', 'sigops.org', 'www.sigops.org')
+    return any(urlsplit(url).hostname in ('dl.acm.org', 'sigops.org', 'www.sigops.org',
+                                         'asplos-conference.org', 'www.asplos-conference.org')
                for url in (paper.page_url, *paper.file_urls))
 
 
