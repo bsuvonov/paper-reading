@@ -48,7 +48,7 @@ class DownloadQueueTests(unittest.TestCase):
 
     def launch(self, args, **kwargs):
         payload = json.loads(Path(args[-1]).read_text())
-        if payload['paper_id'] == self.fail_launch:
+        if self.fail_launch is not None and payload.get('paper_id') == self.fail_launch:
             raise OSError('Worker could not be started')
         process = ControlledProcess()
         with self.changed:
@@ -155,6 +155,80 @@ class DownloadQueueTests(unittest.TestCase):
         status = client.get('/api/jobs').get_json()['job']
         self.assertEqual(status['title'], 'two')
         self.assertEqual(status['completed'][0]['title'], 'one')
+
+    def test_edition_batches_queue_behind_other_work_and_deduplicate_with_single_year(self):
+        self.enqueue('outline', action='outline')
+        payloads = web.download_scope({'conferences': ['fast', 'osdi'], 'years': [2024, 2025]})
+        result = self.jobs.start_many(payloads)
+        self.assertEqual(result['added'], 4)
+        self.assertEqual([job['title'] for job in result['job']['queue']],
+                         ['OSDI 2025', 'OSDI 2024', 'FAST 2025', 'FAST 2024'])
+        self.assertEqual(self.jobs.start_many(payloads)['already_queued'], 4)
+        self.assertEqual(len(self.jobs.start(payloads[0])['queue']), 4)
+        self.enqueue('another-paper')
+        self.launched[0][1].finish()
+        self.wait_for_workers(2)
+        self.assertEqual(self.launched[1][0]['title'], 'OSDI 2025')
+        self.launched[1][1].finish(1)
+        self.wait_for_workers(3)
+        self.assertEqual(self.launched[2][0]['title'], 'OSDI 2024')
+        self.assertEqual(self.jobs.snapshot()['completed'][-1]['status'], 'failed')
+        for index in range(2, 5):
+            self.launched[index][1].finish()
+            self.wait_for_workers(index + 2)
+        self.assertEqual(self.launched[-1][0]['paper_id'], 'another-paper')
+        self.launched[-1][1].finish()
+        self.assertEqual(self.jobs.snapshot()['queue'], [])
+
+    def test_download_scope_api_validates_entire_request_before_enqueuing(self):
+        app = web.create_app(self.root)
+        self.jobs = app.config['JOBS']
+        client = app.test_client()
+        headers = {'X-Library-Token': client.get('/api/library').get_json()['token']}
+        self.assertEqual(client.post('/api/downloads', json={'conferences': 'all', 'years': 'all'}).status_code, 403)
+        invalid = [None, [], {}, {'conferences': [], 'years': [2025]},
+                   {'conferences': ['osdi', 'local-test'], 'years': [2025]},
+                   {'conferences': ['osdi', {}], 'years': [2025]},
+                   {'conferences': 'osdi', 'years': [2025]},
+                   {'conferences': ['osdi'], 'years': []},
+                   {'conferences': ['osdi'], 'years': [2025, 1900]},
+                   {'conferences': ['osdi'], 'years': ['2025']},
+                   {'conferences': ['osdi'], 'years': [True]}]
+        for payload in invalid:
+            self.assertEqual(client.post('/api/downloads', json=payload, headers=headers).status_code, 400, payload)
+        self.assertEqual(len(self.launched), 0)
+        response = client.post('/api/downloads', json={'conferences': ['osdi', 'sosp', 'osdi'], 'years': [2024, 2025, 2025]}, headers=headers)
+        self.assertEqual(response.status_code, 202)
+        data = response.get_json()
+        expected = web.download_scope({'conferences': ['osdi', 'sosp'], 'years': [2024, 2025]})
+        self.assertEqual(data['added'], len(expected))
+        self.assertEqual(data['editions'], len(expected))
+        self.assertEqual(data['job']['title'], 'OSDI 2025')
+        single = client.post('/api/jobs', json={'action': 'download_year', 'year': 2025}, headers=headers)
+        self.assertEqual(single.status_code, 202)
+        self.assertEqual(len(single.get_json()['job']['queue']), len(expected) - 1)
+        duplicate = client.post('/api/downloads', json={'conferences': ['osdi', 'sosp'], 'years': [2024, 2025]}, headers=headers).get_json()
+        self.assertEqual(duplicate['added'], 0)
+        self.assertEqual(duplicate['already_queued'], len(expected))
+
+
+class DownloadScopeTests(unittest.TestCase):
+    def test_years_from_all_conferences_skip_editions_not_available(self):
+        years = [2024, 2025]
+        payloads = web.download_scope({'conferences': 'all', 'years': years})
+        expected = {(ident, year) for ident, (_, available) in web.CONFERENCES.items()
+                    for year in years if year in available}
+        self.assertEqual({(p['project_id'], p['year']) for p in payloads}, expected)
+        self.assertEqual(len(payloads), len(expected))
+
+    def test_all_years_of_selected_or_all_conferences(self):
+        for conferences in [['osdi', 'asplos'], 'all']:
+            payloads = web.download_scope({'conferences': conferences, 'years': 'all'})
+            expected = {(ident, year) for ident, (_, years) in web.CONFERENCES.items()
+                        if conferences == 'all' or ident in conferences for year in years}
+            self.assertEqual({(p['project_id'], p['year']) for p in payloads}, expected)
+            self.assertEqual(len(payloads), len(expected))
+            self.assertTrue(all(p['action'] == 'download_year' and p['title'] for p in payloads))
 
 
 class WebAppTests(unittest.TestCase):

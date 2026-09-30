@@ -102,6 +102,18 @@ dialog input, dialog select { background: var(--surface); color: var(--ink); }
 .job-summary button.quiet { min-height: 28px; padding: 4px 8px; font-size: 11px; }
 #close-job { width: 28px; flex: none; }
 dialog .dialog-actions { gap: 6px; }
+#download-dialog { width: min(540px, 94vw); max-height: 90dvh; overflow: auto; }
+#download-dialog fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 14px 0; padding: 8px 12px 12px; }
+#download-dialog legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+#download-dialog .download-check { display: flex; align-items: center; gap: 7px; margin: 0; padding: 5px 0; }
+#download-dialog input[type="checkbox"] { width: 14px; height: 14px; margin: 0; padding: 0; flex: none; accent-color: var(--accent); }
+.download-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin-top: 6px; }
+#download-years { grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); max-height: 180px; overflow: auto; }
+#download-years .field-hint { grid-column: 1 / -1; }
+#download-preview { font-size: 12px; line-height: 1.6; }
+#download-preview summary { cursor: pointer; }
+#download-editions { max-height: 130px; overflow: auto; padding-left: 20px; }
+#download-editions li { margin: 6px 0; }
 .search-wrap span, .hint, .paper-meta .year-tag,
 .section-link .page-number, #job-log { color: var(--muted); }
 .tabs span, .badge { background: var(--soft); color: var(--muted); }

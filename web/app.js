@@ -266,8 +266,11 @@ function renderList() {
 function renderYearAction() {
   const year = $('year').value;
   const complete = state.yearStatus[year]?.status === 'downloaded';
-  $('download-year').textContent = complete ? `${year} downloaded` : year ? `Download ${year}` : 'Download year';
-  $('download-year').disabled = !year || complete || state.job?.status === 'running';
+  const task = [...(state.job?.status === 'running' ? [state.job] : []), ...(state.job?.queue || [])]
+    .find(job => job.action === 'download_year' && job.project_id === state.projectId && String(job.year) === year);
+  $('download-year').textContent = task ? (task.status === 'running' ? `Downloading ${year}…` : `${year} queued`)
+    : complete ? `${year} downloaded` : year ? `Download ${year}` : 'Download year';
+  $('download-year').disabled = !year || complete || Boolean(task);
 }
 function yearLabel(year, info) {
   if (info?.status === 'downloaded') return `${year} · ✓ Downloaded`;
@@ -649,6 +652,7 @@ function renderProjects() {
   $('add-paper').hidden = !local;
   $('upload-papers').hidden = !local;
   $('download-year').hidden = local;
+  $('download-scope').hidden = local;
   $('year').hidden = local;
   $('availability').style.width = local ? '100%' : '';
 }

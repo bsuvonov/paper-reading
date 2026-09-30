@@ -245,7 +245,7 @@ class Library:
 
 
 class Jobs:
-    """Run one worker at a time, with a FIFO queue for paper downloads."""
+    """Run one worker at a time, with a FIFO queue for paper and edition downloads."""
     def __init__(self, root):
         self.root = Path(root)
         self.lock = threading.RLock()
@@ -312,26 +312,56 @@ class Jobs:
                     'completed': list(self.completed)}
 
     def start(self, payload):
+        return self.start_many([payload])['job']
+
+    def start_many(self, payloads):
         with self.lock:
             self._advance()
-            busy = self.process and self.process.poll() is None
-            if busy and payload['action'] != 'download':
+            busy = self.current and self.current['status'] == 'running'
+            downloads = ('download', 'download_year')
+            if busy and any(payload['action'] not in downloads for payload in payloads):
                 raise RuntimeError('A task is already running. You can keep reading while it finishes.')
-            if payload['action'] == 'download':
-                candidates = ([self.current] if busy else []) + list(self.pending)
-                if any(job['action'] == 'download' and job['paper_id'] == payload.get('paper_id') and
-                       job['project_id'] == payload.get('project_id', 'osdi') for job in candidates):
-                    return self.snapshot()
-            ident = secrets.token_hex(8)
+            candidates = ([self.current] if busy else []) + list(self.pending)
+            added = 0
             directory = self.root / '.web-jobs'
             directory.mkdir(exist_ok=True)
-            spec = directory / (ident + '.json')
-            extractor.write_json(spec, payload)
-            self.pending.append(dict(id=ident, action=payload['action'], paper_id=payload.get('paper_id'),
-                                     project_id=payload.get('project_id', 'osdi'), year=payload.get('year'),
-                                     title=payload.get('title'), status='queued', queued=time.time()))
+            for payload in payloads:
+                field = 'year' if payload['action'] == 'download_year' else 'paper_id'
+                if payload['action'] in downloads and any(
+                        job['action'] == payload['action'] and job.get(field) == payload.get(field) and
+                        job['project_id'] == payload.get('project_id', 'osdi') for job in candidates):
+                    continue
+                ident = secrets.token_hex(8)
+                extractor.write_json(directory / (ident + '.json'), payload)
+                job = dict(id=ident, action=payload['action'], paper_id=payload.get('paper_id'),
+                           project_id=payload.get('project_id', 'osdi'), year=payload.get('year'),
+                           title=payload.get('title'), status='queued', queued=time.time())
+                self.pending.append(job)
+                candidates.append(job)
+                added += 1
             self._advance()
-            return self.snapshot()
+            return dict(job=self.snapshot(), added=added, already_queued=len(payloads) - added)
+
+
+def download_scope(payload):
+    """Expand a conference/year selection into valid editions before queuing any work."""
+    if not isinstance(payload, dict):
+        raise ValueError('Choose conferences and years to download.')
+    conferences, years = payload.get('conferences'), payload.get('years')
+    if conferences == 'all':
+        conferences = list(CONFERENCES)
+    if (not isinstance(conferences, list) or not conferences or
+            any(not isinstance(ident, str) or ident not in CONFERENCES for ident in conferences)):
+        raise ValueError('Choose one or more supported conferences.')
+    conferences = [ident for ident in CONFERENCES if ident in conferences]
+    available = {year for ident in conferences for year in CONFERENCES[ident][1]}
+    if years == 'all':
+        years = available
+    elif (not isinstance(years, list) or not years or
+          any(type(year) is not int or year not in available for year in years)):
+        raise ValueError('Choose years available in the selected conferences.')
+    return [dict(action='download_year', project_id=ident, year=year, title=f'{CONFERENCES[ident][0]} {year}')
+            for ident in conferences for year in sorted(set(years) & set(CONFERENCES[ident][1]), reverse=True)]
 
 
 def ensure_downloader_idle(root):
@@ -643,6 +673,11 @@ def create_app(root=ROOT):
     def job_status():
         return jsonify(job=jobs.snapshot())
 
+    @app.post('/api/downloads')
+    def download_editions():
+        payloads = download_scope(request.get_json(silent=True))
+        return jsonify(**jobs.start_many(payloads), editions=len(payloads)), 202
+
     @app.post('/api/jobs')
     def start_job():
         payload = request.get_json(silent=True)
@@ -657,6 +692,7 @@ def create_app(root=ROOT):
                 raise ValueError('Select a conference year to download.')
             if payload.get('year') is not None and (type(payload['year']) is not int or payload['year'] not in selected.project['years']):
                 return jsonify(error='Choose a valid conference year.'), 400
+            payload['title'] = f'{selected.project["name"]} {payload.get("year") or "all years"}'
         elif payload['action'] == 'import_url':
             if selected.project['kind'] != 'local':
                 raise ValueError('URL import is available only in local projects.')

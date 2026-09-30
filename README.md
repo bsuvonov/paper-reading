@@ -30,7 +30,8 @@ Open **http://127.0.0.1:8000**. If the port is busy, use
 - **Conference libraries:** OSDI, SOSP, ASPLOS, NSDI, FAST, USENIX ATC, and USENIX Security,
   organized by year and collapsible session categories.
 - **Queued downloads:** browse titles before downloading; save individual papers
-  or a selected year. Papers open automatically when ready.
+  or use **Download scope…** for selected years and conferences, all conferences,
+  or all available years. Editions queue one at a time; saved papers are skipped.
 - **Local projects:** create reading collections, use **Add URL** or **Upload PDFs**
   (one or more files), and save conference papers to projects. Select a paper and use
   **Category** to create collapsible groups, then drag papers onto a group to move

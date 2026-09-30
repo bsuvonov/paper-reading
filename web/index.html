@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/static/codex.css">
   <script src="/static/pdf-reader.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/downloads.js" defer></script>
   <script src="/static/vendor/xterm.js" defer></script>
   <script src="/static/vendor/addon-fit.js" defer></script>
   <script src="/static/codex.js" defer></script>
@@ -33,7 +34,7 @@
       <div class="sidebar-tabs"><div class="tabs" role="tablist" aria-label="Sidebar view"><button id="papers-tab" role="tab" aria-selected="true" aria-controls="paper-list">Papers <span id="paper-count">0</span></button><button id="outline-tab" role="tab" aria-selected="false" aria-controls="outline-panel">Outline</button></div><button id="save-to-project" class="quiet" hidden>Save to project</button></div>
       <div id="paper-list" class="scroll-panel" role="tabpanel" aria-labelledby="papers-tab"></div>
       <div id="outline-panel" class="scroll-panel" role="tabpanel" aria-labelledby="outline-tab" hidden></div>
-      <div class="library-actions"><button id="download-year" class="primary" disabled>Download year</button><button id="add-paper" class="quiet" data-task hidden>Add URL</button><button id="upload-papers" class="primary" data-task hidden>Upload PDFs</button><button id="categorize-paper" class="quiet" data-task hidden>Category</button></div>
+      <div class="library-actions"><button id="download-year" class="primary" disabled>Download year</button><button id="download-scope" class="quiet">Download scope…</button><button id="add-paper" class="quiet" data-task hidden>Add URL</button><button id="upload-papers" class="primary" data-task hidden>Upload PDFs</button><button id="categorize-paper" class="quiet" data-task hidden>Category</button></div>
     </aside>
     <aside id="codex-sidebar" aria-label="Codex scopes and sessions" hidden>
       <div class="codex-sidebar-heading"><strong>Codex</strong><div class="codex-navigation"><button id="codex-current-paper" class="quiet">Current paper</button><button id="codex-back" class="quiet" hidden>Sessions</button></div></div>
@@ -95,6 +96,18 @@
   </main>
   <section id="job-panel" hidden aria-label="Background task"><div class="job-summary"><span class="job-dot"></span><span id="job-title" role="status"></span><button class="quiet" id="toggle-log">Show progress</button><button class="quiet" id="close-job" aria-label="Dismiss task notification" title="Dismiss" hidden>✕</button></div><pre id="job-log" hidden></pre></section>
   <div id="toast" role="alert" hidden></div>
+  <dialog id="download-dialog" aria-labelledby="download-dialog-title">
+    <form id="download-form">
+      <h2 id="download-dialog-title">Download conference papers</h2>
+      <fieldset><legend>Conferences</legend><label class="download-check"><input id="download-all-conferences" type="checkbox">All conferences</label><div id="download-conferences" class="download-choice-grid"></div></fieldset>
+      <fieldset><legend>Years</legend><label class="download-check"><input id="download-all-years" type="checkbox">All available years</label><div id="download-years" class="download-choice-grid"></div></fieldset>
+      <p id="download-summary" role="status"></p>
+      <details id="download-preview"><summary>Selected editions</summary><ul id="download-editions"></ul></details>
+      <p class="field-hint">Only available conference editions are included. Saved papers are skipped. Downloads run one edition at a time; keep the server running.</p>
+      <p id="download-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="quiet" data-close="download-dialog">Cancel</button><button id="download-submit" type="submit" class="primary" disabled>Queue downloads</button></div>
+    </form>
+  </dialog>
   <dialog id="project-dialog">
     <form id="project-form"><h2 id="project-dialog-title">New local project</h2><label>Project name<input id="project-name" required maxlength="100" autocomplete="off"></label><p id="project-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close="project-dialog">Cancel</button><button type="submit" class="primary">Save project</button></div></form>
     <div id="archive-controls" hidden><hr><p>Remove this project from the library. Its papers will be kept in the archive folder.</p><button id="archive-project" class="danger">Archive project</button></div>
