@@ -432,6 +432,61 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['title'], 'My existing paper')
 
+    def test_rename_local_paper_preserves_reader_outline_category_and_duplicate_identity(self):
+        ident, headers = self.create_local()
+        paper_id = self.upload_local(ident, headers).get_json()['paper_id']
+        url = '/api/papers/' + paper_id + '?project=' + ident
+        library = web.Library(self.root, ident)
+        self.client.patch(url, json={'category': 'Memory'}, headers=headers)
+        web.generate_outline(library, library.get(paper_id))
+        before = self.client.get(url).get_json()
+        original = library.get(paper_id)['_path'].read_bytes()
+        response = self.client.patch(url, json={'title': '  My   reading notes  '}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {'title': 'My reading notes'})
+        after = self.client.get(url).get_json()
+        self.assertEqual(after, {**before, 'title': 'My reading notes'})
+        self.assertEqual(library.get(paper_id)['_path'].read_bytes(), original)
+        self.assertEqual(self.upload_local(ident, headers).get_json()['paper_id'], paper_id)
+        self.assertEqual(web.Library(self.root, ident).get(paper_id)['title'], 'My reading notes')
+        self.assertEqual(self.client.get('/api/library?project=' + ident).get_json()['papers'][0]['title'], 'My reading notes')
+
+    def test_rename_loose_local_pdf_and_remove_cleans_up_title(self):
+        ident, headers = self.create_local()
+        library = web.Library(self.root, ident)
+        path = library.papers / 'local' / 'Loose PDF.pdf'
+        path.write_bytes(self.pdf.read_bytes())
+        row = library.catalog()[0]
+        url = '/api/papers/' + row['id'] + '?project=' + ident
+        before = self.client.get(url).get_json()
+        response = self.client.patch(url, json={'title': 'Useful <paper> / notes'}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get(url).get_json(), {**before, 'title': 'Useful <paper> / notes'})
+        self.assertTrue(path.exists())
+        self.assertEqual(self.client.delete(url, headers=headers).status_code, 200)
+        self.assertNotIn(row['id'], json.loads((library.root / 'titles.json').read_text()))
+
+    def test_rename_paper_validates_input_project_and_busy_state(self):
+        ident, headers = self.create_local()
+        other, _ = self.create_local('Other')
+        paper_id = self.upload_local(ident, headers).get_json()['paper_id']
+        url = '/api/papers/' + paper_id + '?project=' + ident
+        before = self.client.get(url).get_json()
+        self.assertEqual(self.client.patch(url, json={'title': 'Renamed'}).status_code, 403)
+        for value in [None, [], {}, 5, '', '   ', 'x' * 301]:
+            self.assertEqual(self.client.patch(url, json={'title': value}, headers=headers).status_code, 400)
+        self.assertEqual(self.client.patch(url, json={'title': 'New', 'category': 'Memory'}, headers=headers).status_code, 400)
+        self.assertEqual(self.client.patch('/api/papers/' + paper_id + '?project=' + other,
+                                         json={'title': 'Renamed'}, headers=headers).status_code, 404)
+        conference = self.catalog()['papers'][0]['id']
+        self.assertEqual(self.client.patch('/api/papers/' + conference,
+                                         json={'title': 'Renamed'}, headers=headers).status_code, 400)
+        self.app.config['JOBS'].process = Mock(poll=Mock(return_value=None))
+        self.assertEqual(self.client.patch(url, json={'title': 'Renamed'}, headers=headers).status_code, 409)
+        self.assertEqual(self.client.get(url).get_json(), before)
+        for library_id in (ident, other, 'osdi'):
+            self.assertFalse((web.Library(self.root, library_id).root / 'titles.json').exists())
+
     def test_local_categories_persist_without_changing_paper_identity_or_reader(self):
         ident, headers = self.create_local()
         paper_id = self.upload_local(ident, headers).get_json()['paper_id']
@@ -480,6 +535,44 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual({row['category'] for row in library.catalog()}, {''})
         self.assertEqual({row['id'] for row in library.catalog()}, before)
         self.assertTrue(all(row['downloaded'] for row in library.catalog()))
+
+    def test_category_moves_append_and_persist_with_legacy_assignments(self):
+        ident, headers = self.create_local()
+        library = web.Library(self.root, ident)
+        for title in ('Alpha', 'Beta', 'Zulu'):
+            (library.papers / 'local' / (title + '.pdf')).write_bytes(self.pdf.read_bytes())
+        rows = {row['title']: row for row in library.catalog()}
+        # Existing projects used plain strings and alphabetic ordering.
+        web.extractor.write_json(library.root / 'categories.json', {
+            row['id']: 'Source' if title == 'Alpha' else 'Target' for title, row in rows.items()})
+
+        def move(title, category):
+            response = self.client.patch('/api/papers/' + rows[title]['id'] + '?project=' + ident,
+                                         json={'category': category}, headers=headers)
+            self.assertEqual(response.status_code, 200)
+
+        def ordered(category):
+            # A new Library instance reads persisted order, just as a reload does.
+            papers = [r for r in web.Library(self.root, ident).catalog() if r['category'] == category]
+            return [r['title'] for r in sorted(papers, key=lambda r: (r['category_order'], r['title']))]
+
+        self.assertEqual(ordered('Target'), ['Beta', 'Zulu'])
+        move('Alpha', 'Target')
+        self.assertEqual(ordered('Target'), ['Beta', 'Zulu', 'Alpha'])
+        move('Beta', 'target')  # Reassigning the same category is a no-op.
+        self.assertEqual(ordered('Target'), ['Beta', 'Zulu', 'Alpha'])
+        endpoint = '/api/projects/' + ident + '/categories'
+        response = self.client.patch(endpoint, json={'category': 'Target', 'name': 'Renamed'}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ordered('Renamed'), ['Beta', 'Zulu', 'Alpha'])
+        move('Beta', '')
+        move('Alpha', '')
+        self.assertEqual(ordered(''), ['Beta', 'Alpha'])
+        # Removing/merging a category appends its papers after the destination.
+        response = self.client.patch(endpoint, json={'category': 'Renamed', 'name': ''}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ordered(''), ['Beta', 'Alpha', 'Zulu'])
+        self.assertEqual({r['id'] for r in library.catalog()}, {r['id'] for r in rows.values()})
 
     def test_category_edits_validate_input_and_are_local_and_project_scoped(self):
         first, headers = self.create_local('First')

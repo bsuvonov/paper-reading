@@ -113,10 +113,32 @@ class Library:
                                _manifest=None, _outline=outline)
         if self.project['kind'] == 'local':
             categories = read_json(self.root / 'categories.json')
+            titles = read_json(self.root / 'titles.json')
             for row in rows.values():
-                row['category'] = categories.get(row['id'], row['category'])
+                assignment = categories.get(row['id'], row['category'])
+                # Older projects stored just the category name. New assignments
+                # also keep the paper's position within that category.
+                row['category'] = assignment['name'] if isinstance(assignment, dict) else assignment
+                row['category_order'] = assignment.get('order', 0) if isinstance(assignment, dict) else 0
+                row['title'] = titles.get(row['id'], row['title'])
                 row['program_order'] = None
         return sorted(rows.values(), key=lambda r: (-int(r['year']) if r['year'].isdigit() else 0, r['title'].lower()))
+
+    def rename_paper(self, row, value):
+        if self.project['kind'] != 'local':
+            raise ValueError('Papers can be renamed only in local projects.')
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError('Enter a paper name.')
+        title = ' '.join(value.split())
+        if len(title) > 300:
+            raise ValueError('Paper names must be at most 300 characters.')
+        # Keep identifiers and file paths stable, including for loose PDFs, so
+        # saved reader positions, categories, outlines and Codex links survive.
+        path = self.root / 'titles.json'
+        titles = read_json(path)
+        titles[row['id']] = title
+        extractor.write_json(path, titles)
+        return title
 
     def category_name(self, value, rows):
         if self.project['kind'] != 'local':
@@ -131,10 +153,14 @@ class Library:
         return next((r['category'] for r in rows if r['category'].casefold() == name.casefold()), name)
 
     def set_category(self, row, value):
-        name = self.category_name(value, self.catalog())
+        rows = self.catalog()
+        name = self.category_name(value, rows)
+        if row['category'] == name:
+            return name
         path = self.root / 'categories.json'
         categories = read_json(path)
-        categories[row['id']] = name
+        order = max((r['category_order'] for r in rows if r['category'] == name), default=0) + 1
+        categories[row['id']] = dict(name=name, order=order)
         extractor.write_json(path, categories)
         return name
 
@@ -147,7 +173,14 @@ class Library:
         name = self.category_name(value, [row for row in rows if row['category'] != previous])
         path = self.root / 'categories.json'
         categories = read_json(path)
-        categories.update({row['id']: name for row in affected})
+        destination = [row for row in rows if row['category'] == name and row not in affected]
+        if destination:
+            # A merge appends the source group in its existing order.
+            order = max(row['category_order'] for row in destination)
+            for offset, row in enumerate(sorted(affected, key=lambda r: (r['category_order'], r['title'].casefold())), 1):
+                categories[row['id']] = dict(name=name, order=order + offset)
+        else:
+            categories.update({row['id']: dict(name=name, order=row['category_order']) for row in affected})
         extractor.write_json(path, categories)
         return name, len(affected)
 
@@ -242,6 +275,10 @@ class Library:
         if row['id'] in categories:
             del categories[row['id']]
             extractor.write_json(self.root / 'categories.json', categories)
+        titles = read_json(self.root / 'titles.json')
+        if row['id'] in titles:
+            del titles[row['id']]
+            extractor.write_json(self.root / 'titles.json', titles)
 
 
 class Jobs:
@@ -547,6 +584,9 @@ def create_app(root=ROOT):
     jobs = Jobs(library.root)
     token = secrets.token_urlsafe(32)
     store = ProjectStore(root)
+    from conference_search import ConferenceSearch
+    search = ConferenceSearch(root, Library)
+    app.config['CONFERENCE_SEARCH'] = search
     from codex_sessions import register_codex
     register_codex(app, root, Library)
     app.config.update(LIBRARY=library, JOBS=jobs, TRUSTED_HOSTS=['localhost', '127.0.0.1', '[::1]'],
@@ -603,6 +643,21 @@ def create_app(root=ROOT):
             project = store.create(payload.get('name'))
         return jsonify(project=project), 201
 
+    @app.get('/api/search')
+    def search_papers():
+        try:
+            limit = int(request.args.get('limit', '100'))
+        except ValueError:
+            raise ValueError('Enter a valid search result limit.')
+        return jsonify(search.search(request.args.get('q', ''), request.args.get('availability', 'all'), limit))
+
+    @app.post('/api/search/index')
+    def index_conferences():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or type(payload.get('retry', False)) is not bool:
+            raise ValueError('Invalid search index request.')
+        return jsonify(index=search.start(retry=payload.get('retry', False))), 202
+
     @app.route('/api/projects/<ident>', methods=['PATCH', 'DELETE'])
     def edit_project(ident):
         with edit_library():
@@ -638,17 +693,18 @@ def create_app(root=ROOT):
         return jsonify(selected.detail(row))
 
     @app.patch('/api/papers/<ident>')
-    def categorize_paper(ident):
+    def edit_paper(ident):
         payload = request.get_json(silent=True)
-        if not isinstance(payload, dict) or 'category' not in payload:
-            raise ValueError('Choose a category for this paper.')
+        if not isinstance(payload, dict) or set(payload) not in ({'category'}, {'title'}):
+            raise ValueError('Provide a paper name or category to change.')
         with edit_library():
             selected = selected_library()
             row = selected.get(ident)
             if not row:
                 abort(404)
-            name = selected.set_category(row, payload['category'])
-        return jsonify(category=name)
+            if 'title' in payload:
+                return jsonify(title=selected.rename_paper(row, payload['title']))
+            return jsonify(category=selected.set_category(row, payload['category']))
 
     @app.patch('/api/projects/<ident>/categories')
     def edit_category(ident):

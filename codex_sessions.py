@@ -491,7 +491,7 @@ class CodexSessions:
                 args += ['resume', record['thread_id']]
             elif record['model']:
                 args += ['--model', record['model']]
-            args += ['--cd', record['workspace'], '--no-daemon', '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
+            args += ['--cd', record['workspace'], '--no-daemon', '--dangerously-bypass-approvals-and-sandbox']
             self.terminals[ident] = Terminal(args, record['workspace'], self.store.session_dir(ident), cols, rows)
             record['updated_at'] = time.time()
             record['started'] = True

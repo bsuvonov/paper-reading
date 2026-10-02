@@ -29,13 +29,15 @@ Open **http://127.0.0.1:8000**. If the port is busy, use
 
 - **Conference libraries:** OSDI, SOSP, ASPLOS, NSDI, FAST, USENIX ATC, and USENIX Security,
   organized by year and collapsible session categories.
+- **Global search:** search titles and categories across all conferences and years,
+  including undownloaded papers. Missing paper lists load in the background.
 - **Queued downloads:** browse titles before downloading; save individual papers
   or use **Download scope…** for selected years and conferences, all conferences,
   or all available years. Editions queue one at a time; saved papers are skipped.
 - **Local projects:** create reading collections, use **Add URL** or **Upload PDFs**
   (one or more files), and save conference papers to projects. Select a paper and use
   **Category** to create collapsible groups, then drag papers onto a group to move
-  them. Uploads open in the reader.
+  them. Double-click a paper's name to rename it. Uploads open in the reader.
 - **Outlines:** generate section headings and click them to navigate the paper.
   Scanned papers can use local OCR; extracted headings may need review.
 - **Reader controls:** resize or hide the sidebar, toggle search, and use dark
@@ -55,6 +57,8 @@ Linux, macOS, or WSL.
 Click the Codex icon, select conferences, years, projects, or individual papers,
 then create or resume a session. The paper stays visible beside the terminal.
 Use `/model` to change models and `/` to see available commands.
+New and resumed sessions use `--dangerously-bypass-approvals-and-sandbox`,
+allowing full host access without approval prompts.
 
 Sessions live in `codex-sessions/`, with links to scoped papers and helpers to
 fetch missing papers and extract text. Scope provides research context, not a

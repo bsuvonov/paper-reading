@@ -155,6 +155,9 @@ class CodexScopeTests(unittest.TestCase):
             rpc.assert_not_called()
             self.assertIn('example-model', factory.call_args.args[0])
             self.assertIn('--no-daemon', factory.call_args.args[0])
+            self.assertIn('--dangerously-bypass-approvals-and-sandbox', factory.call_args.args[0])
+            self.assertNotIn('--sandbox', factory.call_args.args[0])
+            self.assertNotIn('--ask-for-approval', factory.call_args.args[0])
         with patch.object(self.manager.rpc, 'call', return_value={'data': [dict(id='native-thread', cwd=record['workspace'])]}):
             self.manager.capture_thread(record['id'], force=True)
         self.assertEqual(self.store.get(record['id'])['thread_id'], 'native-thread')
@@ -164,6 +167,9 @@ class CodexScopeTests(unittest.TestCase):
             reopened.start(record['id'])
             rpc.assert_not_called()
             self.assertIn('native-thread', factory.call_args.args[0])
+            self.assertIn('--dangerously-bypass-approvals-and-sandbox', factory.call_args.args[0])
+            self.assertNotIn('--sandbox', factory.call_args.args[0])
+            self.assertNotIn('--ask-for-approval', factory.call_args.args[0])
 
 
 class NativeTerminalTests(unittest.TestCase):

@@ -212,9 +212,9 @@ with tempfile.TemporaryDirectory(prefix='paper-reading-position-') as directory:
       if (request.method() === 'PATCH' && request.url().includes('/api/papers/')) categoryRequests++;
     });
     const patchResponse = () => page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().includes('/api/papers/'));
-    async function dragInto(category) {
+    async function dragInto(category, title = 'Paper B') {
       const response = patchResponse();
-      await page.locator('.paper-card:has-text("Paper B")').dragTo(categoryGroup(category).locator('summary'));
+      await page.locator(`.paper-card:has-text("${title}")`).dragTo(categoryGroup(category).locator('summary'));
       const result = await response;
       await page.waitForFunction(() => !state.movingPaper);
       return result;
@@ -267,18 +267,26 @@ with tempfile.TemporaryDirectory(prefix='paper-reading-position-') as directory:
     assert.equal(await categoryGroup('Memory').locator('.category-count').innerText(), '1');
     await check(readerDuringDrag, positionDuringDrag);
     assert.equal((await dragInto('Memory')).status(), 200);
+    // A moved paper belongs at the bottom even when its title sorts first.
+    await viewer('Paper A');
+    await assignCategory('');
+    assert.equal((await dragInto('Memory', 'Paper A')).status(), 200);
+    assert.deepEqual(await categoryGroup('Memory').locator('.paper-title').allTextContents(), ['Paper B', 'Paper A']);
+    await check(readerDuringDrag, positionDuringDrag);
     await page.reload();
     await categoryGroup('Memory').waitFor();
     assert.equal(await categoryGroup('Memory').locator('.category-count').innerText(), '2');
     await viewer('Paper B');
     await assignCategory('memory');
     assert.equal(await categoryGroup('Memory').locator('.category-count').innerText(), '2');
+    assert.deepEqual(await categoryGroup('Memory').locator('.paper-title').allTextContents(), ['Paper B', 'Paper A']);
     await categoryGroup('Memory').getByRole('button', {name: 'Edit category Memory', exact: true}).click();
     assert.notEqual(await categoryGroup('Memory').getAttribute('open'), null);
     await page.fill('#category-name', 'Systems');
     await page.click('#category-form button[type=submit]');
     await page.waitForFunction(() => !savingCategory);
     assert.equal(await categoryGroup('Systems').locator('.category-count').innerText(), '2');
+    assert.deepEqual(await categoryGroup('Systems').locator('.paper-title').allTextContents(), ['Paper B', 'Paper A']);
     await assignCategory('Storage');
     await categoryGroup('Systems').getByRole('button', {name: 'Edit category Systems', exact: true}).click();
     await page.fill('#category-name', 'Storage');
@@ -291,6 +299,59 @@ with tempfile.TemporaryDirectory(prefix='paper-reading-position-') as directory:
     await page.waitForFunction(() => !savingCategory);
     assert.equal(await categoryGroup('Uncategorized').locator('.category-count').innerText(), '2');
     assert.equal(await page.locator('.paper-card').count(), 2);
+
+    // Double-click edits a local title inline without rebuilding the PDF reader.
+    await viewer('Paper B');
+    await page.locator('.paper-title', {hasText: 'Paper A'}).dblclick();
+    const nameInput = page.getByRole('textbox', {name: 'Paper name', exact: true});
+    await nameInput.waitFor();
+    await page.waitForFunction(() => state.detail?.title === 'Paper A' && document.querySelector('#viewer-container iframe')?.dataset.readerReady === 'true');
+    const renameFrame = await (await page.locator('#viewer-container iframe').elementHandle()).contentFrame();
+    const renamePosition = await move(renameFrame, 'page=6&zoom=150,120,420');
+    await page.evaluate(() => { window.readerBeforeRename = document.querySelector('#viewer-container iframe'); });
+    await nameInput.fill('Unsaved name');
+    await page.evaluate(() => refreshLibrary());
+    assert.equal(await nameInput.inputValue(), 'Unsaved name');
+    if (process.env.RENAME_SCREENSHOT_PATH) await page.screenshot({path: process.env.RENAME_SCREENSHOT_PATH});
+    await nameInput.press('Escape');
+    assert.equal(await nameInput.count(), 0);
+    assert.equal(await page.locator('.paper-title', {hasText: 'Paper A'}).count(), 1);
+
+    await page.locator('.paper-title', {hasText: 'Paper A'}).dblclick();
+    await nameInput.fill('');
+    await nameInput.press('Enter');
+    assert.equal(await nameInput.getAttribute('aria-invalid'), 'true');
+    await nameInput.fill('Reading notes A');
+    await page.route('**/api/papers/**', route => {
+      if (route.request().method() === 'PATCH') return route.fulfill({status: 409, json: {error: 'Rename temporarily unavailable'}});
+      return route.continue();
+    });
+    await nameInput.press('Enter');
+    await page.getByText('Rename temporarily unavailable', {exact: true}).waitFor();
+    assert.equal(await page.evaluate(() => state.detail.title), 'Paper A');
+    assert.equal(await nameInput.inputValue(), 'Reading notes A');
+    await page.unroute('**/api/papers/**');
+    await nameInput.press('Enter');
+    await page.waitForFunction(() => !state.renamingPaper);
+    assert.equal(await page.locator('.paper-title', {hasText: 'Reading notes A'}).count(), 1);
+    assert.equal(await page.evaluate(() => readerBeforeRename === document.querySelector('#viewer-container iframe')), true);
+    assert.equal(await page.locator('#viewer-container iframe').getAttribute('title'), 'Reading notes A');
+    await check(renameFrame, renamePosition);
+
+    await page.locator('.paper-card:has-text("Reading notes A")').focus();
+    await page.keyboard.press('F2');
+    await nameInput.fill('Research A');
+    await page.click('#papers-tab'); // Moving focus out of the editor saves.
+    await page.waitForFunction(() => !state.renamingPaper);
+    await viewer('Paper B');
+    await check(await viewer('Research A'), renamePosition);
+    await page.reload();
+    await page.locator('.paper-title', {hasText: 'Research A'}).waitFor();
+    await check(await viewer('Research A'), renamePosition);
+    if (!await page.locator('#search').isVisible()) await page.click('#toggle-search');
+    await page.fill('#search', 'Research A');
+    assert.equal(await page.locator('.paper-card').count(), 1);
+    await page.fill('#search', '');
     await page.selectOption('#project', info.other);
     await page.locator('.paper-card:has-text("Paper C")').waitFor();
     assert.equal(await page.locator('.category-edit').count(), 0);
@@ -298,7 +359,7 @@ with tempfile.TemporaryDirectory(prefix='paper-reading-position-') as directory:
     await page.waitForFunction(() => state.project?.id === 'osdi');
     assert.equal(await page.locator('#categorize-paper').isVisible(), false);
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: PDF positions; category drag/drop, collapsed targets, empty Uncategorized, refresh during drag, failed moves, persistence, editing, and project isolation.');
+    console.log('Browser checks passed: PDF positions; category drag/drop; local title double-click/F2 renaming, Enter/blur save, Escape cancel, failed saves, persistence, search, reader preservation, and project isolation.');
   } finally {
     await browser?.close();
     server.kill('SIGTERM');

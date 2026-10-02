@@ -12,6 +12,7 @@ state.startingCatalog = false;
 state.catalogFailure = null;
 state.draggedPaper = null;
 state.movingPaper = null;
+state.renamingPaper = null;
 state.paperListPending = false;
 try {
   state.collapsedCategories = new Set(JSON.parse(localStorage.getItem('paper-collapsed-categories') || '[]'));
@@ -28,7 +29,11 @@ function notify(message) {
 async function api(url, options) {
   const response = await fetch(url, options);
   const data = await response.json().catch(() => ({error: `Request failed (${response.status})`}));
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function element(tag, className, text) {
@@ -73,6 +78,7 @@ function filteredPapers() {
 }
 function paperCard(paper) {
   const button = element('button', 'paper-card' + (state.selected === paper.id ? ' selected' : ''));
+  button.dataset.paperId = paper.id;
   button.setAttribute('aria-pressed', String(state.selected === paper.id));
   const moving = state.movingPaper?.projectId === state.projectId && state.movingPaper.paperId === paper.id;
   button.setAttribute('aria-busy', String(moving));
@@ -80,7 +86,7 @@ function paperCard(paper) {
     button.draggable = !state.movingPaper;
     button.title = 'Drag onto a category to move this paper';
     button.ondragstart = event => {
-      if (state.job?.status === 'running' || state.movingPaper || savingCategory) {
+      if (state.job?.status === 'running' || state.movingPaper || state.renamingPaper || savingCategory) {
         event.preventDefault();
         return;
       }
@@ -94,13 +100,115 @@ function paperCard(paper) {
   }
   const meta = element('span', 'paper-meta');
   meta.append(element('span', 'year-tag', paper.project_kind === 'local' ? 'Local paper' : `${paper.project_name} ${paper.year}`));
-  const task = downloadTask(paper.id);
+  const task = downloadTask(paper.id, paper.project_id);
   const status = moving ? 'Moving…' : task?.status === 'running' ? 'Downloading…' : task ? `Queued · ${task.position}` : paper.downloaded ? 'Downloaded' : paper.pdf_unavailable ? 'No PDF found' : 'Not downloaded';
   meta.append(element('span', 'badge' + (paper.downloaded ? ' ready' : ''), status));
   if (paper.section_count) meta.append(element('span', 'badge' + (paper.outline_status === 'needs_review' ? ' review' : ''), 'Outline'));
-  button.append(meta, element('span', 'paper-title', paper.title));
-  button.onclick = () => selectPaper(paper.id);
+  const title = element('span', 'paper-title', paper.title);
+  if (paper.project_kind === 'local') {
+    title.title = 'Double-click to rename';
+    title.ondblclick = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      renamePaper(paper, button);
+    };
+    button.onkeydown = event => {
+      if (event.key === 'F2') { event.preventDefault(); renamePaper(paper, button); }
+    };
+    button.setAttribute('aria-keyshortcuts', 'F2');
+  }
+  button.append(meta, title);
+  button.onclick = event => { if (event.detail < 2) selectPaper(paper.id); };
   return button;
+}
+function renderPaperSelection() {
+  $('paper-list').querySelectorAll('button.paper-card').forEach(card => {
+    const selected = card.dataset.paperId === state.selected;
+    card.classList.toggle('selected', selected);
+    card.setAttribute('aria-pressed', String(selected));
+  });
+  $('categorize-paper').hidden = Boolean(window.ConferenceSearch?.active()) || state.project?.kind !== 'local' || !state.papers.some(p => p.id === state.selected);
+}
+function renamePaper(paper, card) {
+  if (state.renamingPaper || state.draggedPaper || state.movingPaper || savingCategory) return;
+  if (state.job?.status === 'running') {
+    notify('Wait for the current task to finish before renaming papers.');
+    return;
+  }
+  const projectId = state.projectId;
+  const editor = element('div', card.className + ' paper-renaming');
+  const input = element('input', 'paper-name-input');
+  input.type = 'text';
+  input.value = paper.title;
+  input.maxLength = 300;
+  input.setAttribute('aria-label', 'Paper name');
+  const message = element('span', 'paper-rename-hint', 'Enter to save · Esc to cancel');
+  message.id = 'paper-rename-status';
+  message.setAttribute('role', 'status');
+  input.setAttribute('aria-describedby', message.id);
+  editor.append(card.querySelector('.paper-meta').cloneNode(true), input, message);
+  const editing = {saving: false, cancel: () => finish()};
+  function finish() {
+    if (state.renamingPaper !== editing) return;
+    const focused = editor.contains(document.activeElement);
+    state.renamingPaper = null;
+    state.paperListPending = false;
+    renderList();
+    if (focused && state.projectId === projectId) {
+      $('paper-list').querySelector(`[data-paper-id="${paper.id}"]`)?.focus({preventScroll: true});
+    }
+  }
+  async function save() {
+    if (state.renamingPaper !== editing || editing.saving) return;
+    const title = input.value.trim().replace(/\s+/g, ' ');
+    if (!title) {
+      message.textContent = 'Enter a paper name, or press Esc to cancel.';
+      message.classList.add('form-error');
+      input.setAttribute('aria-invalid', 'true');
+      return;
+    }
+    if (title === paper.title) { finish(); return; }
+    editing.saving = true;
+    input.readOnly = true;
+    editor.setAttribute('aria-busy', 'true');
+    message.classList.remove('form-error');
+    message.textContent = 'Saving…';
+    try {
+      const result = await api(`/api/papers/${paper.id}?project=${encodeURIComponent(projectId)}`, writeOptions('PATCH', {title}));
+      if (state.projectId === projectId) {
+        for (const row of state.papers) if (row.id === paper.id) row.title = result.title;
+        if (state.detail?.id === paper.id) {
+          state.detail.title = result.title;
+          const frame = $('viewer-container').querySelector('iframe');
+          if (frame) frame.title = result.title;
+        }
+      }
+      finish();
+    } catch (error) {
+      if (state.renamingPaper === editing) {
+        message.textContent = error.message;
+        message.classList.add('form-error');
+      } else notify('Could not rename paper: ' + error.message);
+    } finally {
+      editing.saving = false;
+      input.readOnly = false;
+      editor.removeAttribute('aria-busy');
+    }
+  }
+  input.oninput = () => input.removeAttribute('aria-invalid');
+  input.onkeydown = event => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') { event.preventDefault(); save(); }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (!editing.saving) finish();
+    }
+  };
+  input.onblur = save;
+  state.renamingPaper = editing;
+  card.replaceWith(editor);
+  input.focus();
+  input.select();
 }
 function endPaperDrag() {
   state.draggedPaper = null;
@@ -181,8 +289,17 @@ function categoryGroups(papers) {
     a.order - b.order || a.category.localeCompare(b.category));
 }
 function renderList() {
-  // Replacing the dragged DOM node would cancel a drag during background polling.
-  if (state.draggedPaper) { state.paperListPending = true; return; }
+  // Keep an active drag or name editor intact during background polling.
+  if (state.draggedPaper || state.renamingPaper) { state.paperListPending = true; return; }
+  const globalSearch = window.ConferenceSearch?.active();
+  $('year').disabled = Boolean(globalSearch);
+  if (globalSearch) {
+    $('categorize-paper').hidden = true;
+    window.ConferenceSearch.render();
+    renderYearAction();
+    return;
+  }
+  window.ConferenceSearch?.reset();
   const local = state.project?.kind === 'local';
   const papers = filteredPapers();
   $('categorize-paper').hidden = !local || !state.papers.some(paper => paper.id === state.selected);
@@ -239,7 +356,9 @@ function renderList() {
         }
       };
       const content = element('div', 'category-papers');
-      group.papers.sort((a, b) => (!local && (a.program_order ?? Infinity) - (b.program_order ?? Infinity)) || a.title.localeCompare(b.title));
+      group.papers.sort((a, b) => (local
+        ? (a.category_order ?? 0) - (b.category_order ?? 0)
+        : (a.program_order ?? Infinity) - (b.program_order ?? Infinity)) || a.title.localeCompare(b.title));
       for (const paper of group.papers) content.append(paperCard(paper));
       details.append(summary, content);
       list.append(details);
@@ -380,7 +499,7 @@ async function selectPaper(id, {persist = true} = {}) {
   const requestId = ++state.request;
   const projectId = state.projectId;
   state.selected = id;
-  renderList();
+  renderPaperSelection();
   try {
     const detail = await api(`/api/papers/${id}?project=${encodeURIComponent(projectId)}`);
     if (requestId !== state.request || projectId !== state.projectId) return;
@@ -474,7 +593,7 @@ async function poll() {
     // Retry transient connection failures on the next poll.
   } finally { setTimeout(poll, 1500); }
 }
-$('search').oninput = renderList;
+$('search').oninput = () => window.ConferenceSearch ? window.ConferenceSearch.input() : renderList();
 $('year').onchange = () => {
   clearSelection();
   $('search').value = '';
@@ -482,7 +601,7 @@ $('year').onchange = () => {
   switchTab('papers');
   queueYearCatalog();
 };
-$('availability').onchange = renderList;
+$('availability').onchange = () => window.ConferenceSearch?.active() ? window.ConferenceSearch.input() : renderList();
 $('papers-tab').onclick = () => switchTab('papers');
 $('outline-tab').onclick = () => switchTab('outline');
 for (const name of ['papers', 'outline']) $(name + '-tab').onkeydown = event => {
@@ -648,6 +767,10 @@ function renderProjects() {
   }
   $('project').value = state.projectId;
   const local = state.project?.kind === 'local';
+  if (!state.searchScopeInitialized) {
+    $('search-scope').value = local ? 'current' : 'all';
+    state.searchScopeInitialized = true;
+  }
   $('manage-project').hidden = !local;
   $('add-paper').hidden = !local;
   $('upload-papers').hidden = !local;
@@ -657,6 +780,7 @@ function renderProjects() {
   $('availability').style.width = local ? '100%' : '';
 }
 function clearSelection() {
+  state.renamingPaper?.cancel();
   endPaperDrag();
   PaperPDF.close();
   state.request++;
@@ -672,21 +796,25 @@ function restoreSelection() {
   const previous = localStorage.getItem('paper-selected-' + state.projectId) || (state.projectId === 'osdi' ? localStorage.getItem('osdi-paper') : null);
   if (previous && state.papers.some(p => p.id === previous)) return selectPaper(previous);
 }
-async function switchProject(id) {
+async function switchProject(id, {keepSearch = false, restore = true} = {}) {
   state.projectId = id;
+  state.project = state.projects.find(project => project.id === id) || null;
   state.papers = [];
   state.yearStatus = {};
   state.pendingCatalog = null;
   state.catalogFailure = null;
   localStorage.setItem('paper-project', id);
   clearSelection();
-  $('search').value = '';
+  if (!keepSearch) {
+    $('search').value = '';
+    $('search-scope').value = state.project?.kind === 'local' ? 'current' : 'all';
+  }
   $('year').value = '';
-  $('availability').value = 'all';
+  if (!keepSearch) $('availability').value = 'all';
   switchTab('papers');
   renderList();
   await refreshLibrary();
-  await restoreSelection();
+  if (restore && state.projectId === id) await restoreSelection();
 }
 $('project').onchange = () => switchProject($('project').value).catch(error => notify(error.message));
 let editingProject = false;

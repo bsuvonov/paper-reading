@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/static/codex.css">
   <script src="/static/pdf-reader.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/search.js" defer></script>
   <script src="/static/downloads.js" defer></script>
   <script src="/static/vendor/xterm.js" defer></script>
   <script src="/static/vendor/addon-fit.js" defer></script>
@@ -28,7 +29,7 @@
     <aside id="sidebar" aria-label="Paper library and outlines">
       <div class="filters">
         <div class="project-controls"><select id="project" aria-label="Project or conference"></select><button id="new-project" class="quiet" title="Create local project" aria-label="Create local project"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><button id="manage-project" class="quiet" title="Manage project" aria-label="Manage project" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></svg></button></div>
-        <div class="search-wrap" id="search-controls"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search papers or categories…" aria-label="Search papers or categories"></div>
+        <div id="search-controls"><div class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="300" placeholder="Search papers or categories…" aria-label="Search papers or categories"></div><select id="search-scope" aria-label="Paper search scope"><option value="all">All conferences · all years</option><option value="current">This library</option></select></div>
         <div class="filter-row"><select id="year" aria-label="Conference year"><option value="">All years</option></select><select id="availability" aria-label="Filter availability"><option value="all">All papers</option><option value="downloaded">Downloaded</option><option value="outlines">With outlines</option><option value="missing">Not downloaded</option></select></div>
       </div>
       <div class="sidebar-tabs"><div class="tabs" role="tablist" aria-label="Sidebar view"><button id="papers-tab" role="tab" aria-selected="true" aria-controls="paper-list">Papers <span id="paper-count">0</span></button><button id="outline-tab" role="tab" aria-selected="false" aria-controls="outline-panel">Outline</button></div><button id="save-to-project" class="quiet" hidden>Save to project</button></div>

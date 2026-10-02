@@ -89,6 +89,9 @@ dialog input, dialog select { background: var(--surface); color: var(--ink); }
 .search-wrap { min-height: 32px; padding-inline: 9px; gap: 7px; }
 .search-wrap input { padding-block: 7px; font-size: 12px; line-height: 18px; }
 .search-wrap span { font-size: 21px; }
+#search-scope { width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; background: var(--surface); font-size: 12px; }
+.catalog-status button { margin: 5px 0 0 5px; }
+.search-more { display: block; margin: 10px auto; }
 .filter-row { gap: 6px; margin-top: 8px; }
 .tabs { gap: 18px; padding-inline: 16px; }
 .tabs button { min-height: 36px; padding: 9px 0; font-size: 12px; line-height: 18px; }
@@ -124,6 +127,9 @@ dialog .dialog-actions { gap: 6px; }
 .paper-card.selected { background: var(--selected); border-color: var(--selected-border); }
 .paper-card[draggable="true"] { cursor: grab; }
 .paper-card.dragging, .paper-card[aria-busy="true"] { opacity: .55; }
+.paper-renaming { border: 1px solid var(--selected-border); border-radius: 5px; }
+.paper-name-input { display: block; width: 100%; margin: 5px 0; padding: 5px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); font-size: 13px; }
+.paper-rename-hint { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
 .paper-category.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; background: var(--selected); }
 .paper-category.drop-target > .category-heading { background: var(--selected); }
 .paper-category.empty-category { display: none; }
